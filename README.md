@@ -6,13 +6,12 @@ Base inicial del servidor en NiceGUI para interactuar con dispositivos ESP32 Eco
 
 Esta versión ya incluye:
 
-- página principal en NiceGUI
-- captura de IP o mDNS del ESP32
+- página principal mínima en NiceGUI con solo IP/mDNS y botón **Conectar**
 - resolución automática de endpoints locales del dispositivo
   - `/status`
   - `/lecturas`
+- pantalla `/dashboard` para visualizar mediciones con estilo basado en `web/EcoSensor01`
 - guardado local del host del ESP en `data/settings.json`
-- visualización formateada de JSON para respuestas del ESP
 - estructura inicial del servidor central
   - `POST /api/v1/ingest`
   - `GET /api/v1/device/{device_id}/config`
@@ -25,10 +24,18 @@ El usuario escribe por ejemplo:
 - `192.168.1.50`
 - `ecosensor01.local`
 
-Y la aplicación construye automáticamente:
+Al presionar **Conectar**, la aplicación guarda el host, verifica `/status` si está disponible,
+deja lista la configuración que consulta el ESP32 desde el servidor y abre `/dashboard`.
+
+La aplicación construye automáticamente:
 
 - `http://<host>/status`
 - `http://<host>/lecturas`
+
+La configuración que requiere el ESP32 queda disponible en:
+
+- `GET /api/v1/device/ecosensor01/config`
+- `GET /api/v1/device/ecosensor01/time`
 
 ## Arranque
 

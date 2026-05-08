@@ -1,16 +1,20 @@
+import asyncio
 import json
 import os
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 from fastapi import Body
 from nicegui import app, ui
 
 APP_DIR = Path(__file__).resolve().parent
 DATA_DIR = APP_DIR / 'data'
+STATIC_DIR = APP_DIR / 'static'
 SETTINGS_FILE = DATA_DIR / 'settings.json'
 DEVICE_ID = 'ecosensor01'
 UI_HOST = os.getenv('ECOSENSOR_SERVER_HOST', '0.0.0.0')
@@ -27,6 +31,8 @@ LATEST_INGEST: dict[str, Any] = {
     'payload': None,
     'received_at': None,
 }
+
+app.add_static_files('/static', STATIC_DIR)
 
 
 def ensure_data_dir() -> None:
@@ -85,46 +91,11 @@ def build_endpoints(host: str) -> dict[str, str]:
     }
 
 
-def pretty_json(data: Any) -> str:
-    return json.dumps(data, indent=2, ensure_ascii=False, sort_keys=False)
-
-
 def current_utc_iso() -> str:
     return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
-async def fetch_json(url: str) -> dict[str, Any]:
-    return await ui.run_javascript(
-        f'''
-        return fetch({url!r})
-            .then(async response => {{
-                const text = await response.text();
-                let data = null;
-                try {{
-                    data = JSON.parse(text);
-                }} catch (error) {{
-                    data = text;
-                }}
-                return {{
-                    ok: response.ok,
-                    status: response.status,
-                    url: {url!r},
-                    data,
-                }};
-            }})
-            .catch(error => ({{
-                ok: false,
-                status: 0,
-                url: {url!r},
-                data: String(error),
-            }}));
-        ''',
-        timeout=30,
-    )
-
-
-@app.get('/api/v1/device/{device_id}/config')
-def api_get_config(device_id: str):
+def device_config_payload(device_id: str = DEVICE_ID) -> dict[str, Any]:
     settings = load_settings()
     return {
         'ok': True,
@@ -133,6 +104,159 @@ def api_get_config(device_id: str):
         'upload_interval_s': settings['upload_interval_s'],
         'time_required': settings['time_required'],
     }
+
+
+def fetch_json_sync(url: str, timeout: float = 8.0) -> dict[str, Any]:
+    request = Request(url, headers={'Accept': 'application/json'})
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            raw = response.read().decode('utf-8', errors='replace')
+            try:
+                data: Any = json.loads(raw)
+            except json.JSONDecodeError:
+                data = raw
+            return {'ok': 200 <= response.status < 300, 'status': response.status, 'url': url, 'data': data}
+    except HTTPError as exc:
+        raw = exc.read().decode('utf-8', errors='replace') if exc.fp else ''
+        return {'ok': False, 'status': exc.code, 'url': url, 'data': raw}
+    except (TimeoutError, URLError, OSError) as exc:
+        return {'ok': False, 'status': 0, 'url': url, 'data': str(exc)}
+
+
+async def fetch_json(url: str) -> dict[str, Any]:
+    return await asyncio.to_thread(fetch_json_sync, url)
+
+
+def latest_payload() -> dict[str, Any] | None:
+    payload = LATEST_INGEST.get('payload')
+    return payload if isinstance(payload, dict) else None
+
+
+def row_from_payload(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not payload:
+        return None
+    return {
+        'id': payload.get('device_id', DEVICE_ID),
+        'timestamp': payload.get('timestamp') or LATEST_INGEST.get('received_at'),
+        'pm1p0': payload.get('pm1p0'),
+        'pm2p5': payload.get('pm2p5'),
+        'pm4p0': payload.get('pm4p0'),
+        'pm10p0': payload.get('pm10p0'),
+        'voc': payload.get('voc'),
+        'nox': payload.get('nox'),
+        'co2': payload.get('co2'),
+        'temp': payload.get('temp'),
+        'hum': payload.get('hum'),
+        'window_s': payload.get('window_s'),
+    }
+
+
+def format_value(value: Any, decimals: int = 2) -> str:
+    if value is None:
+        return '0'
+    if isinstance(value, float):
+        return f'{value:.{decimals}f}'
+    return str(value)
+
+
+def add_styles() -> None:
+    ui.add_head_html(
+        '''
+        <style>
+        body { background: #cce5dc; color: #101820; }
+        .connect-shell {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+        }
+        .connect-box {
+            width: min(520px, 100%);
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 12px;
+            align-items: start;
+        }
+        .dashboard {
+            width: min(1180px, 100%);
+            margin: 0 auto;
+            padding: 28px 18px 44px;
+            text-align: center;
+            font-family: "Arial Narrow", Arial, sans-serif;
+        }
+        .top-nav {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px 18px;
+            margin-bottom: 18px;
+            font-size: 18px;
+            font-weight: 700;
+        }
+        .brand-title { color: rgb(4, 87, 9); font-size: 28px; font-weight: 700; }
+        .section-title {
+            color: rgb(4, 4, 52);
+            font-size: 26px;
+            font-weight: 700;
+            text-decoration: underline;
+        }
+        .pollutant-card {
+            background: rgba(255, 255, 255, .52);
+            border: 1px solid rgba(0, 0, 0, .12);
+            border-radius: 8px;
+            padding: 16px;
+        }
+        .thumbs {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(110px, 1fr));
+            gap: 12px;
+        }
+        .thumb {
+            background: #fff;
+            border: 1px solid rgba(0, 0, 0, .14);
+            border-radius: 8px;
+            padding: 8px;
+            font-weight: 700;
+        }
+        .thumb img {
+            width: 100%;
+            height: 84px;
+            object-fit: contain;
+        }
+        .measure-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            margin-top: 20px;
+        }
+        .measure-table th,
+        .measure-table td {
+            font-size: 24px;
+            text-align: center;
+            border: 1px solid black;
+            padding: 10px;
+        }
+        .measure-table th { background: #80ffd4; }
+        .status-line {
+            min-height: 28px;
+            font-size: 19px;
+            color: #1d332a;
+        }
+        @media (max-width: 760px) {
+            .connect-box { grid-template-columns: 1fr; }
+            .thumbs { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+            .measure-table th,
+            .measure-table td { font-size: 18px; }
+        }
+        </style>
+        '''
+    )
+
+
+@app.get('/api/v1/device/{device_id}/config')
+def api_get_config(device_id: str):
+    return device_config_payload(device_id)
 
 
 @app.get('/api/v1/device/{device_id}/time')
@@ -160,106 +284,132 @@ async def api_post_ingest(payload: dict = Body(...)):
 @ui.page('/')
 def index() -> None:
     ui.page_title('EcoSensor Servidor')
+    add_styles()
     settings = load_settings()
-    current = {
-        'host': settings.get('esp_host', ''),
-        'endpoints': build_endpoints(settings.get('esp_host', '')),
-    }
 
-    with ui.column().classes('w-full max-w-5xl mx-auto p-6 gap-4'):
-        ui.label('EcoSensor Servidor').classes('text-3xl font-bold')
-        ui.label(
-            'Escribe la IP o el mDNS del ESP32. '
-            'No necesitas poner endpoints; el servidor resolverá automáticamente /status y /lecturas.'
-        ).classes('text-base text-gray-700')
-
-        with ui.card().classes('w-full gap-3'):
-            ui.label('Conexión con el ESP').classes('text-lg font-semibold')
+    with ui.element('div').classes('connect-shell'):
+        with ui.element('div').classes('connect-box'):
             host_input = ui.input(
-                label='IP o mDNS del ESP32',
-                placeholder='Ejemplo: 192.168.1.50 o ecosensor01.local',
-                value=current['host'],
-            ).classes('w-full')
-            helper = ui.label().classes('text-sm text-gray-600')
+                placeholder='IP o mDNS del ESP32',
+                value=settings.get('esp_host', ''),
+            ).props('outlined dense autofocus').classes('w-full')
+            connect_button = ui.button('Conectar').props('unelevated color=primary')
 
-            with ui.row().classes('gap-2 flex-wrap'):
-                save_button = ui.button('Guardar host y resolver endpoints')
-                test_status_button = ui.button('Probar /status')
-                test_lecturas_button = ui.button('Probar /lecturas')
+    async def connect() -> None:
+        host = normalize_host_input(host_input.value)
+        if not host:
+            ui.notify('Escribe la IP o mDNS del ESP32', color='negative')
+            return
 
-            with ui.column().classes('gap-1'):
-                base_url_label = ui.label().classes('font-mono text-sm')
-                status_url_label = ui.label().classes('font-mono text-sm')
-                lecturas_url_label = ui.label().classes('font-mono text-sm')
+        settings['esp_host'] = host
+        save_settings(settings)
+        endpoints = build_endpoints(host)
+        status = await fetch_json(endpoints['status'])
+        if not status.get('ok'):
+            ui.notify('Host guardado; no se pudo leer /status todavía', color='warning')
+        else:
+            ui.notify('ESP32 conectado. Configuración del servidor lista.', color='positive')
+        ui.navigate.to('/dashboard')
 
-        with ui.grid(columns=2).classes('w-full gap-4'):
-            with ui.card().classes('w-full'):
-                ui.label('Respuesta de /status').classes('text-lg font-semibold')
-                status_result = ui.codemirror(language='JSON', value='').classes('w-full h-72')
-            with ui.card().classes('w-full'):
-                ui.label('Respuesta de /lecturas').classes('text-lg font-semibold')
-                lecturas_result = ui.codemirror(language='JSON', value='').classes('w-full h-72')
+    connect_button.on('click', connect)
+    host_input.on('keydown.enter', connect)
 
-        with ui.card().classes('w-full gap-3'):
-            ui.label('Servidor central (base)').classes('text-lg font-semibold')
-            ui.label('Endpoints iniciales ya expuestos por esta app:').classes('text-sm text-gray-700')
-            ui.label('POST /api/v1/ingest').classes('font-mono text-sm')
-            ui.label(f'GET /api/v1/device/{DEVICE_ID}/config').classes('font-mono text-sm')
-            ui.label(f'GET /api/v1/device/{DEVICE_ID}/time').classes('font-mono text-sm')
-            latest_ingest_view = ui.codemirror(language='JSON', value='').classes('w-full h-72')
 
-        def refresh_labels() -> None:
-            endpoints = current['endpoints']
-            base_url_label.set_text(f"Base URL: {endpoints['base_url'] or '-'}")
-            status_url_label.set_text(f"/status: {endpoints['status'] or '-'}")
-            lecturas_url_label.set_text(f"/lecturas: {endpoints['lecturas'] or '-'}")
-            helper.set_text(
-                f"Host guardado: {current['host']}" if current['host'] else 'Aún no hay host guardado.'
+@ui.page('/dashboard')
+def dashboard() -> None:
+    ui.page_title('EcoSensor Mediciones')
+    add_styles()
+    settings = load_settings()
+    host = settings.get('esp_host', '')
+    endpoints = build_endpoints(host)
+
+    with ui.element('div').classes('dashboard'):
+        with ui.element('nav').classes('top-nav'):
+            ui.link('Conexión', '/')
+            ui.link('Mediciones', '/dashboard')
+
+        with ui.row().classes('items-center justify-center gap-3'):
+            ui.label('LCT Didacticos').classes('brand-title')
+            ui.image('/static/LCT_SF.png').classes('w-[90px] h-[90px]')
+
+        ui.label('Mediciones Ambientales').classes('section-title')
+        id_label = ui.label('').classes('text-xl font-bold min-h-[32px]')
+
+        with ui.element('section').classes('pollutant-card w-full mt-4'):
+            ui.label('Información sobre contaminantes').classes('text-lg font-bold')
+            ui.label(
+                'Referencia visual de los contaminantes monitoreados por el EcoSensor.'
+            ).classes('text-base')
+            with ui.element('div').classes('thumbs mt-3'):
+                for filename, label in (
+                    ('pm.png', 'PM2.5'),
+                    ('co2.png', 'CO2'),
+                    ('voc.png', 'VOC'),
+                    ('nox.png', 'NOx'),
+                ):
+                    with ui.element('div').classes('thumb'):
+                        ui.image(f'/static/{filename}')
+                        ui.label(label)
+
+        table = ui.html('').classes('w-full')
+        start_info = ui.label('').classes('status-line mt-6')
+        time_info = ui.label('').classes('status-line')
+        connection_info = ui.label('').classes('status-line mt-3')
+
+        with ui.row().classes('justify-center gap-3 mt-4'):
+            refresh_button = ui.button('Actualizar')
+            reconnect_button = ui.button('Cambiar conexión', on_click=lambda: ui.navigate.to('/'))
+
+    def render_table(row: dict[str, Any] | None) -> None:
+        if not row:
+            table.set_content(
+                '<div style="margin:20px 0;font-size:32px;font-weight:700;">Esperando Datos...</div>'
+                '<table class="measure-table"><tr><th>Mediciones</th><th>Valor</th><th>Unidad</th></tr></table>'
             )
+            return
 
-        def refresh_ingest_view() -> None:
-            latest_ingest_view.set_value(pretty_json(LATEST_INGEST))
+        rows = [
+            ('PM1.0', format_value(row.get('pm1p0')), 'ug/m3'),
+            ('PM2.5', format_value(row.get('pm2p5')), 'ug/m3'),
+            ('PM4.0', format_value(row.get('pm4p0')), 'ug/m3'),
+            ('PM10.0', format_value(row.get('pm10p0')), 'ug/m3'),
+            ('VOC', format_value(row.get('voc'), 1), 'Index'),
+            ('NOx', format_value(row.get('nox'), 1), 'Index'),
+            ('CO2', format_value(row.get('co2'), 0), 'ppm'),
+            ('Temperatura', format_value(row.get('temp')), 'C'),
+            ('Humedad Relativa', format_value(row.get('hum'), 0), '%'),
+        ]
+        html_rows = ''.join(f'<tr><td>{name}</td><td>{value}</td><td>{unit}</td></tr>' for name, value, unit in rows)
+        table.set_content(
+            '<table class="measure-table">'
+            '<tr><th>Mediciones</th><th>Valor</th><th>Unidad</th></tr>'
+            f'{html_rows}'
+            '</table>'
+        )
 
-        def resolve_and_store_host() -> bool:
-            host = normalize_host_input(host_input.value)
-            if not host:
-                ui.notify('Escribe una IP o mDNS válido', color='negative')
-                return False
+    async def refresh() -> None:
+        host_now = load_settings().get('esp_host', '')
+        endpoints_now = build_endpoints(host_now)
+        row = row_from_payload(latest_payload())
+        source = 'servidor'
 
-            current['host'] = host
-            current['endpoints'] = build_endpoints(host)
-            settings['esp_host'] = host
-            save_settings(settings)
-            refresh_labels()
-            ui.notify(f'Host guardado y endpoints resueltos para {host}', color='positive')
-            return True
+        if endpoints_now['lecturas']:
+            lecturas = await fetch_json(endpoints_now['lecturas'])
+            data = lecturas.get('data') if lecturas.get('ok') else None
+            if isinstance(data, dict) and data.get('valid'):
+                row = row_from_payload(data)
+                source = 'ESP32'
 
-        async def test_status() -> None:
-            if not current['host'] and not resolve_and_store_host():
-                return
-            result = await fetch_json(current['endpoints']['status'])
-            status_result.set_value(pretty_json(result))
-            ui.notify(
-                'Consulta /status completada' if result.get('ok') else 'Falló consulta /status',
-                color='positive' if result.get('ok') else 'negative',
-            )
+        render_table(row)
+        id_label.set_text(f"ID: {(row or {}).get('id', DEVICE_ID)}")
+        timestamp = (row or {}).get('timestamp') or LATEST_INGEST.get('received_at') or ''
+        start_info.set_text(f"Host conectado: {host_now or '-'}")
+        time_info.set_text(f"Fecha ultima medicion: {timestamp}" if timestamp else '')
+        connection_info.set_text(f"Fuente de datos: {source}. Config ESP32: {device_config_payload(DEVICE_ID)}")
 
-        async def test_lecturas() -> None:
-            if not current['host'] and not resolve_and_store_host():
-                return
-            result = await fetch_json(current['endpoints']['lecturas'])
-            lecturas_result.set_value(pretty_json(result))
-            ui.notify(
-                'Consulta /lecturas completada' if result.get('ok') else 'Falló consulta /lecturas',
-                color='positive' if result.get('ok') else 'negative',
-            )
-
-        save_button.on('click', resolve_and_store_host)
-        test_status_button.on('click', test_status)
-        test_lecturas_button.on('click', test_lecturas)
-
-        refresh_labels()
-        refresh_ingest_view()
+    refresh_button.on('click', refresh)
+    ui.timer(8.0, refresh)
+    ui.timer(0.1, refresh, once=True)
 
 
 ui.run(host=UI_HOST, port=UI_PORT, title='EcoSensor Servidor', reload=False)
