@@ -11,11 +11,10 @@ def index() -> None:
     ui.page_title('EcoSensor Servidor')
     add_styles()
     settings = load_settings()
-
     with ui.element('div').classes('connect-shell'):
         with ui.element('div').classes('connect-card'):
             ui.label('LCT Didacticos').classes('connect-title')
-            ui.image('/static/LCT_SF.png').classes('connect-logo')
+            ui.image('/static/LCT.png').props('fit=contain no-spinner').classes('connect-logo')
             ui.label(device_display_name()).classes('connect-subtitle')
             with ui.element('div').classes('connect-box'):
                 ui.label('Ingrese la direccion IP o Nombre del EcoSensor').classes('connect-label')

@@ -5,20 +5,33 @@ def add_styles() -> None:
     ui.add_head_html(
         '''
         <style>
-        body { background: #cce5dc; color: #101820; }
+        body { 
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #cce5dc; 
+            color: #101820; 
+            }
         .connect-shell {
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 24px;
+        width: 100%;
+        min-height: 100dvh;
+        box-sizing: border-box;
+    
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    
+        padding: 20px;
+        overflow: hidden;
         }
         .connect-card {
             width: min(560px, 100%);
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 14px;
+            gap: 15px;
             text-align: center;
         }
         .connect-title {
@@ -28,9 +41,19 @@ def add_styles() -> None:
             line-height: 1.1;
         }
         .connect-logo {
-            width: 120px;
-            height: 120px;
-            object-fit: contain;
+            width: 150px !important;
+            height: 150px !important;
+            max-width: 150px;
+            max-height: 150px;
+            overflow: visible;
+        }
+        
+        .connect-logo img,
+        .connect-logo .q-img__image {
+            object-fit: contain !important;
+            background-size: contain !important;
+            background-repeat: no-repeat !important;
+            background-position: center !important;
         }
         .connect-subtitle {
             color: #000;
