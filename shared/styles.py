@@ -10,21 +10,20 @@ def add_styles() -> None:
             padding: 0;
             width: 100%;
             height: 100%;
-            overflow: hidden;
             background: #cce5dc; 
             color: #101820; 
             }
         .connect-shell {
-        width: 100%;
-        min-height: 100dvh;
-        box-sizing: border-box;
-    
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    
-        padding: 20px;
-        overflow: hidden;
+            width: 100%;
+            min-height: 100dvh;
+            box-sizing: border-box;
+        
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        
+            padding: 20px;
+            overflow: hidden;
         }
         .connect-card {
             width: min(560px, 100%);
@@ -41,10 +40,10 @@ def add_styles() -> None:
             line-height: 1.1;
         }
         .connect-logo {
-            width: 150px !important;
-            height: 150px !important;
-            max-width: 150px;
-            max-height: 150px;
+            width: 90px !important;
+            height: 90px !important;
+            max-width: 90px;
+            max-height: 90px;
             overflow: visible;
         }
         

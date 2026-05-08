@@ -20,9 +20,9 @@ def dashboard() -> None:
         with ui.element('nav').classes('top-nav'):
             ui.link('Mediciones', '/dashboard')
 
-        with ui.row().classes('items-center justify-center gap-3'):
+        with ui.column().classes('items-center justify-center gap-3'):
             ui.label('LCT Didacticos').classes('brand-title')
-            ui.image('/static/LCT_SF.png').classes('w-[90px] h-[90px]')
+            ui.image('/static/LCT.png').props('fit=contain no-spinner').classes('connect-logo')
 
         ui.label('Mediciones Ambientales').classes('section-title')
         id_label = ui.label('').classes('text-xl font-bold min-h-[32px]')
