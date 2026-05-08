@@ -10,9 +10,11 @@ La aplicación queda organizada por módulos:
 from nicegui import app, ui
 
 from config import STATIC_DIR, UI_HOST, UI_PORT
-import pages.connect_page  # registra /
+from services.mdns_service import start_mdns_service
+import pages.connect_page  # registra / y /config
 import pages.dashboard_page  # registra /dashboard
 
 app.add_static_files('/static', STATIC_DIR)
+start_mdns_service()
 
 ui.run(host=UI_HOST, port=UI_PORT, title='EcoSensor Servidor', reload=False)

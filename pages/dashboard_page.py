@@ -18,7 +18,6 @@ def dashboard() -> None:
 
     with ui.element('div').classes('dashboard'):
         with ui.element('nav').classes('top-nav'):
-            ui.link('Conexión', '/')
             ui.link('Mediciones', '/dashboard')
 
         with ui.row().classes('items-center justify-center gap-3'):
@@ -51,7 +50,6 @@ def dashboard() -> None:
 
         with ui.row().classes('justify-center gap-3 mt-4'):
             refresh_button = ui.button('Actualizar')
-            ui.button('Cambiar conexión', on_click=lambda: ui.navigate.to('/'))
 
     def render_table(row: dict[str, Any] | None) -> None:
         if not row:
@@ -92,6 +90,14 @@ def dashboard() -> None:
             if isinstance(data, dict) and data.get('valid'):
                 row = row_from_payload(data)
                 source = 'ESP32'
+
+        if not host_now:
+            render_table(None)
+            id_label.set_text(f"ID: {DEVICE_ID}")
+            start_info.set_text('Servidor sin EcoSensor configurado. Configura desde http://localhost:8765/config en el equipo servidor.')
+            time_info.set_text('')
+            connection_info.set_text('Esperando configuración local del servidor.')
+            return
 
         render_table(row)
         id_label.set_text(f"ID: {(row or {}).get('id', DEVICE_ID)}")

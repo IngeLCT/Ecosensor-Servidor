@@ -1,3 +1,4 @@
+from fastapi import Request
 from nicegui import ui
 
 from services.esp_client import build_endpoints, fetch_json, normalize_host_input, post_json, system_datetime_payload
@@ -5,11 +6,32 @@ from shared.formatters import device_display_name
 from shared.styles import add_styles
 from storage.settings_store import load_settings, save_settings
 
+LOCAL_CLIENTS = {'127.0.0.1', '::1', 'localhost'}
+
+
+def is_local_request(request: Request) -> bool:
+    client_host = request.client.host if request.client else ''
+    return client_host in LOCAL_CLIENTS
+
 
 @ui.page('/')
 def index() -> None:
-    ui.page_title('EcoSensor Servidor')
+    ui.navigate.to('/dashboard')
+
+
+@ui.page('/config')
+def config_page(request: Request) -> None:
+    ui.page_title('Configurar EcoSensor Servidor')
     add_styles()
+
+    if not is_local_request(request):
+        with ui.element('div').classes('connect-shell'):
+            with ui.element('div').classes('connect-card'):
+                ui.label('Acceso restringido').classes('connect-title')
+                ui.label('Esta configuración solo se puede abrir desde el equipo servidor.').classes('connect-label')
+                ui.label('Usa: http://localhost:8765/config').classes('connect-label')
+        return
+
     settings = load_settings()
     with ui.element('div').classes('connect-shell'):
         with ui.element('div').classes('connect-card'):
@@ -23,6 +45,7 @@ def index() -> None:
                     value=settings.get('esp_host', ''),
                 ).props('outlined dense autofocus').classes('w-full connect-input')
                 connect_button = ui.button('Conectar').props('unelevated').classes('connect-button')
+                ui.button('Ir al dashboard', on_click=lambda: ui.navigate.to('/dashboard')).props('flat')
 
     async def connect() -> None:
         host = normalize_host_input(host_input.value)

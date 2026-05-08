@@ -6,25 +6,28 @@ Servidor NiceGUI para visualizar mediciones del ESP32 EcoSensor.
 
 Esta versión incluye:
 
-- pantalla inicial con IP/mDNS y botón **Conectar**
+- acceso de usuarios directo al dashboard en `/`
+- dashboard público en `/dashboard`
+- configuración local protegida en `/config`, accesible solo desde el equipo servidor
+- anuncio mDNS como `ecosensor-servidor.local:8765`
 - consulta automática al ESP32 por estos endpoints:
   - `GET /status`
   - `GET /lecturas`
   - `POST /config`
 - envío interno de fecha y hora del sistema al ESP32 cuando `/status` responde `time_valid: false`
-- pantalla `/dashboard` para visualizar mediciones con estilo basado en `web/EcoSensor01`
 - guardado local del host del ESP en `data/settings.json`
 
 ## Estructura del proyecto
 
 ```text
 main.py                 # punto de entrada NiceGUI
-config.py               # rutas, host/puerto y constantes globales
+config.py               # rutas, host/puerto, mDNS y constantes globales
 pages/                  # pantallas NiceGUI
-  connect_page.py       # pantalla inicial de conexión
+  connect_page.py       # redirección / y configuración local /config
   dashboard_page.py     # dashboard de mediciones
 services/
   esp_client.py         # cliente HTTP hacia endpoints del ESP32
+  mdns_service.py       # anuncio mDNS del servidor
 storage/
   settings_store.py     # carga/guardado de data/settings.json
 shared/
@@ -41,15 +44,20 @@ El servidor no espera que el ESP32 le mande datos ni que consulte endpoints del 
 
 Flujo normal:
 
-1. El usuario escribe `ecosensor01.local` o la IP del ESP32.
-2. El servidor consulta `http://<host>/status`.
-3. Si `time_valid` es `false`, el servidor envía:
-   - `POST http://<host>/config`
-   - payload: `{"date":"DD-MM-YYYY","time":"HH:MM:SS"}`
-4. Si el ESP32 confirma `time_valid: true`, se abre `/dashboard`.
-5. El dashboard consulta `http://<host>/lecturas` periódicamente.
+1. Windows corre `Ecosensor-Servidor`.
+2. El servidor anuncia `ecosensor-servidor.local:8765`.
+3. Celulares/PCs entran a `http://ecosensor-servidor.local:8765/`.
+4. `/` redirige directo a `/dashboard`.
+5. El dashboard lee el ESP configurado en `data/settings.json`.
+6. Solo el equipo servidor abre `http://localhost:8765/config` para cambiar el ESP, por ejemplo `ecosensor01.local`.
 
-## Uso esperado
+## Configuración del ESP
+
+Desde el equipo servidor:
+
+```text
+http://localhost:8765/config
+```
 
 El usuario escribe por ejemplo:
 
@@ -62,6 +70,11 @@ La aplicación construye automáticamente:
 - `http://<host>/lecturas`
 - `http://<host>/config`
 
+Si `time_valid` es `false`, el servidor envía:
+
+- `POST http://<host>/config`
+- payload: `{"date":"DD-MM-YYYY","time":"HH:MM:SS"}`
+
 ## Arranque
 
 ```bash
@@ -71,10 +84,10 @@ pip install -r requirements.txt
 python3 main.py
 ```
 
-Opcionalmente se puede configurar host y puerto del servidor NiceGUI:
+Opcionalmente se puede configurar host, puerto y nombre mDNS:
 
 ```bash
-ECOSENSOR_SERVER_HOST=0.0.0.0 ECOSENSOR_SERVER_PORT=8765 python3 main.py
+ECOSENSOR_SERVER_HOST=0.0.0.0 ECOSENSOR_SERVER_PORT=8765 ECOSENSOR_MDNS_HOSTNAME=ecosensor-servidor python3 main.py
 ```
 
 ## Persistencia local
