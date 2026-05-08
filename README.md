@@ -15,6 +15,25 @@ Esta versión incluye:
 - pantalla `/dashboard` para visualizar mediciones con estilo basado en `web/EcoSensor01`
 - guardado local del host del ESP en `data/settings.json`
 
+## Estructura del proyecto
+
+```text
+main.py                 # punto de entrada NiceGUI
+config.py               # rutas, host/puerto y constantes globales
+pages/                  # pantallas NiceGUI
+  connect_page.py       # pantalla inicial de conexión
+  dashboard_page.py     # dashboard de mediciones
+services/
+  esp_client.py         # cliente HTTP hacia endpoints del ESP32
+storage/
+  settings_store.py     # carga/guardado de data/settings.json
+shared/
+  formatters.py         # formato de datos para UI
+  styles.py             # CSS compartido
+static/                 # imágenes usadas por la interfaz
+data/                   # configuración local generada en runtime
+```
+
 ## Arquitectura
 
 El ESP32 expone los endpoints HTTP.
@@ -68,5 +87,4 @@ El host del ESP queda guardado en:
 
 - persistir lecturas en base de datos
 - soportar múltiples dispositivos
-- separar UI y servicios internos
 - agregar historial de mediciones
