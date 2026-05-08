@@ -1,4 +1,5 @@
 import json
+import os
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,8 @@ APP_DIR = Path(__file__).resolve().parent
 DATA_DIR = APP_DIR / 'data'
 SETTINGS_FILE = DATA_DIR / 'settings.json'
 DEVICE_ID = 'ecosensor01'
+UI_HOST = os.getenv('ECOSENSOR_SERVER_HOST', '0.0.0.0')
+UI_PORT = int(os.getenv('ECOSENSOR_SERVER_PORT', '8765'))
 DEFAULT_SETTINGS = {
     'esp_host': '',
     'device_id': DEVICE_ID,
@@ -109,12 +112,12 @@ async def fetch_json(url: str) -> dict[str, Any]:
                     data,
                 }};
             }})
-            .catch(error => ({
+            .catch(error => ({{
                 ok: false,
                 status: 0,
                 url: {url!r},
                 data: String(error),
-            }));
+            }}));
         ''',
         timeout=30,
     )
@@ -259,4 +262,4 @@ def index() -> None:
         refresh_ingest_view()
 
 
-ui.run(title='EcoSensor Servidor', reload=False)
+ui.run(host=UI_HOST, port=UI_PORT, title='EcoSensor Servidor', reload=False)
