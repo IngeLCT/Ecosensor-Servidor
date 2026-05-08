@@ -2,14 +2,13 @@ import asyncio
 import json
 import os
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from fastapi import Body
 from nicegui import app, ui
 
 APP_DIR = Path(__file__).resolve().parent
@@ -22,14 +21,6 @@ UI_PORT = int(os.getenv('ECOSENSOR_SERVER_PORT', '8765'))
 DEFAULT_SETTINGS = {
     'esp_host': '',
     'device_id': DEVICE_ID,
-    'read_interval_s': 5,
-    'upload_interval_s': 60,
-    'time_required': True,
-}
-LATEST_INGEST: dict[str, Any] = {
-    'received': False,
-    'payload': None,
-    'received_at': None,
 }
 
 app.add_static_files('/static', STATIC_DIR)
@@ -88,26 +79,27 @@ def build_endpoints(host: str) -> dict[str, str]:
         'base_url': base_url,
         'status': f'{base_url}/status' if base_url else '',
         'lecturas': f'{base_url}/lecturas' if base_url else '',
-    }
-
-
-def current_utc_iso() -> str:
-    return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-
-
-def device_config_payload(device_id: str = DEVICE_ID) -> dict[str, Any]:
-    settings = load_settings()
-    return {
-        'ok': True,
-        'device_id': device_id,
-        'read_interval_s': settings['read_interval_s'],
-        'upload_interval_s': settings['upload_interval_s'],
-        'time_required': settings['time_required'],
+        'config': f'{base_url}/config' if base_url else '',
     }
 
 
 def fetch_json_sync(url: str, timeout: float = 8.0) -> dict[str, Any]:
     request = Request(url, headers={'Accept': 'application/json'})
+    return request_json_sync(request, url, timeout)
+
+
+def post_json_sync(url: str, payload: dict[str, Any], timeout: float = 8.0) -> dict[str, Any]:
+    body = json.dumps(payload).encode('utf-8')
+    request = Request(
+        url,
+        data=body,
+        headers={'Accept': 'application/json', 'Content-Type': 'application/json'},
+        method='POST',
+    )
+    return request_json_sync(request, url, timeout)
+
+
+def request_json_sync(request: Request, url: str, timeout: float = 8.0) -> dict[str, Any]:
     try:
         with urlopen(request, timeout=timeout) as response:
             raw = response.read().decode('utf-8', errors='replace')
@@ -127,9 +119,16 @@ async def fetch_json(url: str) -> dict[str, Any]:
     return await asyncio.to_thread(fetch_json_sync, url)
 
 
-def latest_payload() -> dict[str, Any] | None:
-    payload = LATEST_INGEST.get('payload')
-    return payload if isinstance(payload, dict) else None
+async def post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return await asyncio.to_thread(post_json_sync, url, payload)
+
+
+def system_datetime_payload() -> dict[str, str]:
+    now = datetime.now().astimezone()
+    return {
+        'date': now.strftime('%d-%m-%Y'),
+        'time': now.strftime('%H:%M:%S'),
+    }
 
 
 def row_from_payload(payload: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -137,7 +136,7 @@ def row_from_payload(payload: dict[str, Any] | None) -> dict[str, Any] | None:
         return None
     return {
         'id': payload.get('device_id', DEVICE_ID),
-        'timestamp': payload.get('timestamp') or LATEST_INGEST.get('received_at'),
+        'timestamp': payload.get('timestamp'),
         'pm1p0': payload.get('pm1p0'),
         'pm2p5': payload.get('pm2p5'),
         'pm4p0': payload.get('pm4p0'),
@@ -254,33 +253,6 @@ def add_styles() -> None:
     )
 
 
-@app.get('/api/v1/device/{device_id}/config')
-def api_get_config(device_id: str):
-    return device_config_payload(device_id)
-
-
-@app.get('/api/v1/device/{device_id}/time')
-def api_get_time(device_id: str):
-    return {
-        'ok': True,
-        'device_id': device_id,
-        'timestamp': current_utc_iso(),
-        'valid': True,
-    }
-
-
-@app.post('/api/v1/ingest')
-async def api_post_ingest(payload: dict = Body(...)):
-    LATEST_INGEST['received'] = True
-    LATEST_INGEST['payload'] = payload
-    LATEST_INGEST['received_at'] = current_utc_iso()
-    return {
-        'ok': True,
-        'device_id': payload.get('device_id', DEVICE_ID),
-        'server_time': LATEST_INGEST['received_at'],
-    }
-
-
 @ui.page('/')
 def index() -> None:
     ui.page_title('EcoSensor Servidor')
@@ -301,14 +273,30 @@ def index() -> None:
             ui.notify('Escribe la IP o mDNS del ESP32', color='negative')
             return
 
-        settings['esp_host'] = host
-        save_settings(settings)
         endpoints = build_endpoints(host)
         status = await fetch_json(endpoints['status'])
         if not status.get('ok'):
-            ui.notify('Host guardado; no se pudo leer /status todavía', color='warning')
+            ui.notify('No se pudo leer /status del ESP32. Revisa IP/mDNS y red.', color='negative')
+            return
+
+        status_data = status.get('data')
+        if not isinstance(status_data, dict):
+            ui.notify('Respuesta inválida desde /status del ESP32.', color='negative')
+            return
+
+        if not status_data.get('time_valid', False):
+            config_payload = system_datetime_payload()
+            config_response = await post_json(endpoints['config'], config_payload)
+            config_data = config_response.get('data')
+            if not config_response.get('ok') or not (isinstance(config_data, dict) and config_data.get('time_valid')):
+                ui.notify('No se pudo configurar fecha/hora en el ESP32.', color='negative')
+                return
+            ui.notify('Fecha/hora enviada al ESP32. Sensores habilitados.', color='positive')
         else:
-            ui.notify('ESP32 conectado. Configuración del servidor lista.', color='positive')
+            ui.notify('ESP32 conectado con fecha/hora válida.', color='positive')
+
+        settings['esp_host'] = host
+        save_settings(settings)
         ui.navigate.to('/dashboard')
 
     connect_button.on('click', connect)
@@ -390,8 +378,8 @@ def dashboard() -> None:
     async def refresh() -> None:
         host_now = load_settings().get('esp_host', '')
         endpoints_now = build_endpoints(host_now)
-        row = row_from_payload(latest_payload())
-        source = 'servidor'
+        row = None
+        source = 'ESP32 sin lecturas válidas'
 
         if endpoints_now['lecturas']:
             lecturas = await fetch_json(endpoints_now['lecturas'])
@@ -402,10 +390,10 @@ def dashboard() -> None:
 
         render_table(row)
         id_label.set_text(f"ID: {(row or {}).get('id', DEVICE_ID)}")
-        timestamp = (row or {}).get('timestamp') or LATEST_INGEST.get('received_at') or ''
+        timestamp = (row or {}).get('timestamp') or ''
         start_info.set_text(f"Host conectado: {host_now or '-'}")
         time_info.set_text(f"Fecha ultima medicion: {timestamp}" if timestamp else '')
-        connection_info.set_text(f"Fuente de datos: {source}. Config ESP32: {device_config_payload(DEVICE_ID)}")
+        connection_info.set_text(f"Fuente de datos: {source}. El servidor consulta endpoints del ESP32.")
 
     refresh_button.on('click', refresh)
     ui.timer(8.0, refresh)

@@ -1,7 +1,0 @@
-{
-  "esp_host": "",
-  "device_id": "ecosensor01",
-  "read_interval_s": 5,
-  "upload_interval_s": 60,
-  "time_required": true
-}
