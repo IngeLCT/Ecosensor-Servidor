@@ -131,6 +131,11 @@ def system_datetime_payload() -> dict[str, str]:
     }
 
 
+def device_display_name(device_id: str = DEVICE_ID) -> str:
+    suffix = ''.join(ch for ch in device_id if ch.isdigit())
+    return f'EcoSensor{suffix or "01"}'
+
+
 def row_from_payload(payload: dict[str, Any] | None) -> dict[str, Any] | None:
     if not payload:
         return None
@@ -170,13 +175,47 @@ def add_styles() -> None:
             justify-content: center;
             padding: 24px;
         }
-        .connect-box {
-            width: min(520px, 100%);
-            display: grid;
-            grid-template-columns: 1fr auto;
-            gap: 12px;
-            align-items: start;
+        .connect-card {
+            width: min(560px, 100%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 14px;
+            text-align: center;
         }
+        .connect-title {
+            color: #045709;
+            font-size: 34px;
+            font-weight: 700;
+            line-height: 1.1;
+        }
+        .connect-logo {
+            width: 120px;
+            height: 120px;
+            object-fit: contain;
+        }
+        .connect-subtitle {
+            color: #000;
+            font-size: 26px;
+            font-weight: 700;
+            text-decoration: underline;
+            line-height: 1.1;
+        }
+        .connect-box {
+            width: min(460px, 100%);
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            align-items: stretch;
+        }
+        .connect-label {
+            font-size: 17px;
+            font-weight: 700;
+            color: #101820;
+            text-align: left;
+        }
+        .connect-input .q-field__control { background: #fff; }
+        .connect-button { background: #214e78 !important; color: #fff !important; }
         .dashboard {
             width: min(1180px, 100%);
             margin: 0 auto;
@@ -243,7 +282,9 @@ def add_styles() -> None:
             color: #1d332a;
         }
         @media (max-width: 760px) {
-            .connect-box { grid-template-columns: 1fr; }
+            .connect-title { font-size: 30px; }
+            .connect-logo { width: 104px; height: 104px; }
+            .connect-subtitle { font-size: 23px; }
             .thumbs { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
             .measure-table th,
             .measure-table td { font-size: 18px; }
@@ -260,12 +301,17 @@ def index() -> None:
     settings = load_settings()
 
     with ui.element('div').classes('connect-shell'):
-        with ui.element('div').classes('connect-box'):
-            host_input = ui.input(
-                placeholder='IP o mDNS del ESP32',
-                value=settings.get('esp_host', ''),
-            ).props('outlined dense autofocus').classes('w-full')
-            connect_button = ui.button('Conectar').props('unelevated color=primary')
+        with ui.element('div').classes('connect-card'):
+            ui.label('LCT Didacticos').classes('connect-title')
+            ui.image('/static/LCT_SF.png').classes('connect-logo')
+            ui.label(device_display_name()).classes('connect-subtitle')
+            with ui.element('div').classes('connect-box'):
+                ui.label('Ingrese la direccion IP o Nombre del EcoSensor').classes('connect-label')
+                host_input = ui.input(
+                    placeholder='ecosensor01.local',
+                    value=settings.get('esp_host', ''),
+                ).props('outlined dense autofocus').classes('w-full connect-input')
+                connect_button = ui.button('Conectar').props('unelevated').classes('connect-button')
 
     async def connect() -> None:
         host = normalize_host_input(host_input.value)
