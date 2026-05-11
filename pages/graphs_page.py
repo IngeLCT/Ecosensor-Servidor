@@ -14,6 +14,7 @@ from storage.measurements_store import graph_rows_history
 MAX_BARS = 24
 INITIAL_FETCH_LIMIT = 5000
 SAMPLE_BASE_MIN = 5
+SERVER_REFRESH_SECONDS = 60.0
 MENU = [
     ('5 min', 5),
     ('15 min', 15),
@@ -378,7 +379,7 @@ def _graph_page(page_title: str, charts: list[ChartSpec]) -> None:
         for spec in charts:
             await redraw_one(spec)
 
-    ui.timer(8.0, refresh)
+    ui.timer(SERVER_REFRESH_SECONDS, refresh)
     ui.timer(0.1, refresh, once=True)
 
 

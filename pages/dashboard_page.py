@@ -134,5 +134,5 @@ def dashboard() -> None:
         )
         connection_info.set_text('')
 
-    ui.timer(8.0, refresh)
+    ui.timer(60.0, refresh)
     ui.timer(0.1, refresh, once=True)
