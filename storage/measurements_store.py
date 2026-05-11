@@ -197,6 +197,22 @@ def graph_rows_history(limit: int = 5000) -> list[dict[str, Any]]:
     return [_graph_row(row) for row in rows]
 
 
+def graph_rows_all() -> list[dict[str, Any]]:
+    ensure_db()
+    with sqlite3.connect(MEASUREMENTS_DB_FILE) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            '''
+            SELECT id, source_id, device_id, device_timestamp,
+                   pm1p0, pm2p5, pm4p0, pm10p0,
+                   voc, nox, co2, temp, hum
+            FROM measurements
+            ORDER BY COALESCE(source_id, id) ASC, id ASC
+            '''
+        ).fetchall()
+    return [_graph_row(row) for row in rows]
+
+
 def graph_rows_since(row_id: int, limit: int = 500) -> list[dict[str, Any]]:
     ensure_db()
     row_id = max(0, int(row_id))

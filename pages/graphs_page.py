@@ -8,7 +8,7 @@ from nicegui import ui
 
 from services.measurement_sync import sync_latest_measurements
 from shared.styles import add_styles
-from storage.measurements_store import graph_rows_history
+from storage.measurements_store import graph_rows_all, graph_rows_history
 
 
 MAX_BARS = 24
@@ -22,6 +22,17 @@ MENU = [
     ('1 hr', 60),
     ('2 hr', 120),
     ('4 hr', 240),
+]
+
+HISTORY_MENU = [
+    ('5 min', 5),
+    ('15 min', 15),
+    ('30 min', 30),
+    ('1 hr', 60),
+    ('2 hr', 120),
+    ('6 hr', 360),
+    ('12 hr', 720),
+    ('24 hr', 1440),
 ]
 
 
@@ -67,6 +78,8 @@ def _nav() -> None:
         ui.link('Gráficas VOC & NOx', '/graficas/voc-nox')
         ui.label('|')
         ui.link('Gráficas CO2, Temperatura & Humedad', '/graficas/ambientales')
+        ui.label('|')
+        ui.link('Gráficas del Historial', '/graficas/historial')
         ui.label('|')
 
 
@@ -136,6 +149,53 @@ def _add_graph_styles() -> None:
             background: #d9efe7 !important;
             z-index: 1;
         }
+        .history-controls {
+            background-color: #cce5dc;
+            padding: 20px;
+            margin: 20px auto;
+            border-radius: 8px;
+            max-width: 800px;
+            text-align: center;
+        }
+        .history-select-label {
+            margin-bottom: 8px;
+            display: block;
+            color: #000;
+            font-size: 22px;
+            font-weight: bold;
+            text-align: center;
+        }
+        .history-slider-box {
+            width: 100%;
+            max-width: 900px;
+            margin: 2em auto;
+            padding: 2em 1em;
+        }
+        .history-range-label {
+            color: #000;
+            font-size: 16px;
+            font-weight: bold;
+            min-height: 22px;
+        }
+        .data-table-container {
+            width: 100%;
+            overflow-x: auto;
+            margin-top: 24px;
+        }
+        .data-table-container table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+        }
+        .data-table-container th,
+        .data-table-container td {
+            font-size: 20px;
+            text-align: center;
+            border: 1px solid black;
+            border-radius: 10px;
+            padding: 8px;
+        }
+        .data-table-container th { background-color: #80ffd4; }
         </style>
         '''
     )
@@ -396,3 +456,300 @@ def voc_nox_graph() -> None:
 @ui.page('/graficas/ambientales')
 def ambient_graph() -> None:
     _graph_page('Gráficas Tiempo Real - CO2, Temperatura & Humedad', AMBIENT_CHARTS)
+
+
+HISTORY_OPTIONS: dict[str, ChartSpec] = {
+    'pm1p0': ChartSpec('pm1p0', 'PM1.0', 'µg/m³', '#ff0000'),
+    'pm2p5': ChartSpec('pm2p5', 'PM2.5', 'µg/m³', '#bfa600'),
+    'pm4p0': ChartSpec('pm4p0', 'PM4.0', 'µg/m³', '#00bfbf'),
+    'pm10p0': ChartSpec('pm10p0', 'PM10.0', 'µg/m³', '#bf00ff'),
+    'voc': ChartSpec('voc', 'VOC', 'Index', '#ff8000'),
+    'nox': ChartSpec('nox', 'NOx', 'Index', '#00ff00'),
+    'co2': ChartSpec('co2', 'CO2', 'ppm', '#990000'),
+    'temp': ChartSpec('temp', 'Temperatura', '°C', '#006600'),
+    'hum': ChartSpec('hum', 'Humedad', '%', '#0000cc', round_values=True),
+}
+
+HISTORY_SELECT_OPTIONS = {
+    'pm1p0': 'PM1.0',
+    'pm2p5': 'PM2.5',
+    'pm4p0': 'PM4.0',
+    'pm10p0': 'PM10.0',
+    'voc': 'VOC',
+    'nox': 'NOx',
+    'co2': 'CO2',
+    'temp': 'Temperatura',
+    'hum': 'Humedad',
+}
+
+
+def _interval_label(minutes: int) -> str:
+    for label, value in HISTORY_MENU:
+        if value == minutes:
+            return label
+    return f'{minutes} min'
+
+
+def _history_series_data(frame: Any, spec: ChartSpec, minutes: int) -> tuple[list[str], list[float], list[Any]]:
+    import pandas as pd
+
+    if frame.empty or spec.key not in frame:
+        return [], [], []
+
+    df = frame[['_dt', spec.key]].copy()
+    df[spec.key] = pd.to_numeric(df[spec.key], errors='coerce')
+    df = df.dropna(subset=[spec.key])
+    if df.empty:
+        return [], [], []
+
+    if minutes == SAMPLE_BASE_MIN:
+        labels = [_fmt_label(ts) for ts in df['_dt']]
+        values = [float(v) for v in df[spec.key]]
+        times = list(df['_dt'])
+    else:
+        rule = '1D' if minutes == 1440 else f'{minutes}min'
+        df['_bin'] = df['_dt'].dt.floor(rule)
+        grouped = df.groupby('_bin')[spec.key].agg(['mean', 'count']).reset_index()
+        required = max(1, math.ceil((minutes / SAMPLE_BASE_MIN) * 0.90))
+        grouped = grouped[grouped['count'] >= required]
+        labels = [_fmt_label(ts) for ts in grouped['_bin']]
+        values = [float(v) for v in grouped['mean']]
+        times = list(grouped['_bin'])
+
+    if spec.round_values:
+        values = [round(v) for v in values]
+
+    return labels, values, times
+
+
+def _history_ticks(times: list[Any], minutes: int) -> tuple[list[Any], list[str]]:
+    if not times:
+        return [], []
+    max_ticks = 10 if minutes == 1440 else 14
+    if len(times) <= max_ticks:
+        selected = list(range(len(times)))
+    else:
+        step = math.ceil(len(times) / max_ticks)
+        selected = list(range(0, len(times), step))
+        if selected[-1] != len(times) - 1:
+            selected.append(len(times) - 1)
+
+    tickvals = [times[i] for i in selected]
+    ticktext: list[str] = []
+    previous_date = ''
+    for i in selected:
+        ts = times[i]
+        if minutes == 1440:
+            ticktext.append(ts.strftime('%d-%m-%Y'))
+            continue
+        base = ts.strftime('%H:%M')
+        date = ts.strftime('%d-%m-%Y')
+        if date != previous_date:
+            ticktext.append(f'{base}<br>{date}')
+            previous_date = date
+        else:
+            ticktext.append(base)
+    return tickvals, ticktext
+
+
+def _build_history_figure(labels: list[str], values: list[float], times: list[Any], spec: ChartSpec, minutes: int) -> Any:
+    import plotly.graph_objects as go
+
+    finite = [v for v in values if isinstance(v, (int, float)) and math.isfinite(v) and v >= 0]
+    upper = max(finite) * 2 if finite and max(finite) > 0 else 1
+    tickvals, ticktext = _history_ticks(times, minutes)
+
+    fig = go.Figure(data=[go.Bar(x=times, y=values, name=spec.title, marker={'color': spec.color})])
+    fig.update_layout(
+        height=600,
+        margin={'t': 20, 'l': 60, 'r': 40, 'b': 95 if minutes == 1440 else 130},
+        bargap=0.2,
+        paper_bgcolor='#cce5dc',
+        plot_bgcolor='#cce5dc',
+        showlegend=False,
+        font={'family': 'Arial', 'color': 'black'},
+    )
+    fig.update_xaxes(
+        type='date',
+        tickmode='array',
+        tickvals=tickvals,
+        ticktext=ticktext,
+        tickangle=-30 if minutes == 1440 else -45,
+        automargin=True,
+        rangeslider={'visible': False},
+        showgrid=False,
+        zeroline=False,
+        showline=True,
+        title={
+            'text': '<b>Fecha de Medición</b>' if minutes == 1440 else '<b>Fecha y Hora de Medición</b>',
+            'font': {'size': 16, 'color': 'black', 'family': 'Arial'},
+            'standoff': 36,
+        },
+        tickfont={'color': 'black', 'size': 14, 'family': 'Arial'},
+    )
+    fig.update_yaxes(
+        title={'text': f'<b>{spec.y_title}</b>', 'font': {'size': 16, 'color': 'black', 'family': 'Arial'}},
+        tickfont={'color': 'black', 'size': 14, 'family': 'Arial'},
+        rangemode='tozero',
+        range=[0, upper],
+        fixedrange=False,
+        showgrid=False,
+        zeroline=False,
+        showline=True,
+    )
+    return fig
+
+
+def _history_table_html(labels: list[str], values: list[float], spec: ChartSpec, minutes: int) -> str:
+    unit_label = _interval_label(minutes)
+    rows = []
+    for idx, (label, value) in enumerate(zip(labels, values)):
+        if spec.round_values:
+            pretty = str(round(value))
+        else:
+            pretty = f'{value:.2f}'
+        rows.append(f'<tr><td>{idx}</td><td>{label or "-"}</td><td>{pretty}</td></tr>')
+    return (
+        '<div class="data-table-container">'
+        '<table id="uploadTable">'
+        '<thead><tr>'
+        '<th>#</th>'
+        f'<th>Fecha y Hora ({unit_label})</th>'
+        f'<th>{spec.title.upper()}</th>'
+        '</tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody>'
+        '</table></div>'
+    )
+
+
+@ui.page('/graficas/historial')
+def history_graph() -> None:
+    ui.page_title('Gráficas del Historial')
+    add_styles()
+    _add_graph_styles()
+
+    frame_cache: Any | None = None
+    current_labels: list[str] = []
+    current_values: list[float] = []
+    current_times: list[Any] = []
+    current_minutes = SAMPLE_BASE_MIN
+
+    with ui.element('div').classes('dashboard'):
+        _nav()
+        with ui.column().classes('items-center justify-center gap-3'):
+            ui.label('LCT Didacticos').classes('brand-title')
+            ui.image('/static/LCT.png').props('fit=contain no-spinner').classes('connect-logo')
+        ui.label('Gráficas del Historial').classes('section-title')
+        status = ui.label('Cargando historial...').classes('status-line mt-3')
+
+        ui.separator()
+        ui.label('Gráfica de Datos Historico').classes('section-title')
+        with ui.column().classes('history-controls'):
+            ui.label('Seleccionar Dato a Graficar:').classes('history-select-label')
+            selector = ui.select(HISTORY_SELECT_OPTIONS, value='pm1p0').props('outlined dense').classes('w-full')
+
+        with ui.column().classes('agg-toolbar-wrap'):
+            ui.label('Historial').classes('agg-chart-title')
+            ui.label('Seleccione el intervalo de lecturas').classes('agg-toolbar-label')
+            interval_buttons: list[Any] = []
+            with ui.row().classes('agg-toolbar'):
+                for label, minutes in HISTORY_MENU:
+                    button = ui.button(label).props('flat no-caps').classes('agg-btn')
+                    interval_buttons.append(button)
+
+                    async def select_interval(m: int = minutes) -> None:
+                        nonlocal current_minutes
+                        current_minutes = m
+                        await rebuild()
+
+                    button.on('click', select_interval)
+
+        with ui.column().classes('history-slider-box'):
+            ui.label('Seleccione el rango del historial').classes('history-select-label')
+            min_label = ui.label('').classes('history-range-label')
+            min_slider = ui.slider(min=0, max=0, value=0, step=1).props('label label-always').classes('w-full')
+            max_label = ui.label('').classes('history-range-label')
+            max_slider = ui.slider(min=0, max=0, value=0, step=1).props('label label-always').classes('w-full')
+
+        chart = ui.plotly({}).classes('w-full chart-card')
+        table = ui.html('').classes('w-full')
+        with ui.row().classes('justify-center gap-3 mt-4'):
+            ui.button('Actualizar historial', on_click=lambda: ui.timer(0.1, load_history, once=True)).props('unelevated')
+            ui.button('Descargar CSV', on_click=lambda: ui.navigate.to('/api/measurements.csv')).props('flat')
+
+    def update_interval_buttons() -> None:
+        for button, (_, minutes) in zip(interval_buttons, HISTORY_MENU):
+            if minutes == current_minutes:
+                button.classes(add='active')
+            else:
+                button.classes(remove='active')
+
+    def slider_bounds() -> tuple[int, int]:
+        if not current_labels:
+            return 0, 0
+        max_idx = len(current_labels) - 1
+        start = int(min_slider.value or 0)
+        end = int(max_slider.value or max_idx)
+        start = max(0, min(start, max_idx))
+        end = max(0, min(end, max_idx))
+        if start > end:
+            start, end = end, start
+        return start, end
+
+    async def redraw() -> None:
+        if not current_labels:
+            chart.figure = _build_history_figure([], [], [], HISTORY_OPTIONS[str(selector.value)], current_minutes)
+            chart.update()
+            table.set_content('')
+            return
+        start, end = slider_bounds()
+        spec = HISTORY_OPTIONS[str(selector.value)]
+        labels = current_labels[start:end + 1]
+        values = current_values[start:end + 1]
+        times = current_times[start:end + 1]
+        min_label.set_text(f'Inicio: {current_labels[start] if current_labels else "-"}')
+        max_label.set_text(f'Fin: {current_labels[end] if current_labels else "-"}')
+        chart.figure = _build_history_figure(labels, values, times, spec, current_minutes)
+        chart.update()
+        table.set_content(_history_table_html(labels, values, spec, current_minutes))
+
+    async def rebuild() -> None:
+        nonlocal current_labels, current_values, current_times
+        if frame_cache is None:
+            return
+        spec = HISTORY_OPTIONS[str(selector.value)]
+        current_labels, current_values, current_times = _history_series_data(frame_cache, spec, current_minutes)
+        max_idx = max(0, len(current_labels) - 1)
+        min_slider.props(f'min=0 max={max_idx} step=1')
+        max_slider.props(f'min=0 max={max_idx} step=1')
+        min_slider.set_value(0)
+        max_slider.set_value(max_idx)
+        update_interval_buttons()
+        await redraw()
+
+    async def load_history() -> None:
+        nonlocal frame_cache
+        try:
+            status.set_text('Cargando historial...')
+            await sync_latest_measurements()
+            rows = await asyncio.to_thread(graph_rows_all)
+            frame_cache = _rows_to_frame(rows)
+            if frame_cache.empty:
+                status.set_text('Error al cargar historial: no hay registros utilizables.')
+            else:
+                total = len(frame_cache)
+                last = frame_cache.iloc[-1]
+                status.set_text(f'Historial cargado. Registros: {total}. Última medición: {last["fecha"]} {last["hora"]}')
+            await rebuild()
+        except ModuleNotFoundError as exc:
+            status.set_text(f'Falta instalar el paquete Python: {exc.name or "plotly/pandas"}')
+        except Exception as exc:
+            status.set_text(f'Error al cargar historial: {exc}')
+
+    async def on_slider_change() -> None:
+        await redraw()
+
+    selector.on('update:model-value', lambda: ui.timer(0.1, rebuild, once=True))
+    min_slider.on('update:model-value', lambda: ui.timer(0.1, on_slider_change, once=True))
+    max_slider.on('update:model-value', lambda: ui.timer(0.1, on_slider_change, once=True))
+    ui.timer(0.1, load_history, once=True)

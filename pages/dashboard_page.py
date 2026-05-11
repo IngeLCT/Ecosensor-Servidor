@@ -25,6 +25,8 @@ def dashboard() -> None:
             ui.label('|')
             ui.link('Gráficas CO2, Temperatura & Humedad', '/graficas/ambientales')
             ui.label('|')
+            ui.link('Gráficas del Historial', '/graficas/historial')
+            ui.label('|')
 
         with ui.column().classes('items-center justify-center gap-3'):
             ui.label('LCT Didacticos').classes('brand-title')
