@@ -36,6 +36,7 @@ def build_endpoints(host: str) -> dict[str, str]:
         'status': f'{base_url}/status' if base_url else '',
         'lecturas': f'{base_url}/lecturas' if base_url else '',
         'config': f'{base_url}/config' if base_url else '',
+        'time': f'{base_url}/time' if base_url else '',
     }
 
 
@@ -77,6 +78,50 @@ async def fetch_json(url: str) -> dict[str, Any]:
 
 async def post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
     return await asyncio.to_thread(post_json_sync, url, payload)
+
+
+def candidate_hosts(saved_host: str, default_host: str) -> list[str]:
+    hosts: list[str] = []
+    for host in (saved_host, default_host):
+        normalized = normalize_host_input(host)
+        if normalized and normalized not in hosts:
+            hosts.append(normalized)
+    return hosts
+
+
+def sync_time_if_needed_sync(host: str, timeout: float = 4.0) -> dict[str, Any]:
+    endpoints = build_endpoints(host)
+    status = fetch_json_sync(endpoints['status'], timeout=timeout)
+    if not status.get('ok') or not isinstance(status.get('data'), dict):
+        return {'ok': False, 'host': host, 'status': status, 'synced': False}
+
+    status_data = status['data']
+    needs_sync = bool(status_data.get('needs_time_sync', not status_data.get('time_valid', False)))
+    if not needs_sync:
+        return {'ok': True, 'host': host, 'status': status, 'synced': False}
+
+    payload = system_datetime_payload()
+    sync_response = post_json_sync(endpoints['time'], payload, timeout=timeout)
+    if not sync_response.get('ok'):
+        sync_response = post_json_sync(endpoints['config'], payload, timeout=timeout)
+
+    sync_data = sync_response.get('data')
+    synced = bool(sync_response.get('ok') and isinstance(sync_data, dict) and sync_data.get('time_valid'))
+    return {'ok': synced, 'host': host, 'status': status, 'sync': sync_response, 'synced': synced}
+
+
+async def sync_time_if_needed(host: str) -> dict[str, Any]:
+    return await asyncio.to_thread(sync_time_if_needed_sync, host)
+
+
+async def autoconnect_and_sync(saved_host: str, default_host: str) -> dict[str, Any]:
+    last_result: dict[str, Any] = {'ok': False, 'host': '', 'synced': False}
+    for host in candidate_hosts(saved_host, default_host):
+        result = await sync_time_if_needed(host)
+        if result.get('ok'):
+            return result
+        last_result = result
+    return last_result
 
 
 def system_datetime_payload() -> dict[str, str]:

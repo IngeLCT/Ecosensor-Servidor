@@ -1,7 +1,7 @@
 from fastapi import Request
 from nicegui import ui
 
-from services.esp_client import build_endpoints, fetch_json, normalize_host_input, post_json, system_datetime_payload
+from services.esp_client import normalize_host_input, sync_time_if_needed
 from shared.formatters import device_display_name
 from shared.styles import add_styles
 from storage.settings_store import load_settings, save_settings
@@ -53,25 +53,13 @@ def config_page(request: Request) -> None:
             ui.notify('Escribe la IP o mDNS del ESP32', color='negative')
             return
 
-        endpoints = build_endpoints(host)
-        status = await fetch_json(endpoints['status'])
-        if not status.get('ok'):
-            ui.notify('No se pudo leer /status del ESP32. Revisa IP/mDNS y red.', color='negative')
+        result = await sync_time_if_needed(host)
+        if not result.get('ok'):
+            ui.notify('No se pudo conectar/sincronizar el ESP32. Revisa IP/mDNS y red.', color='negative')
             return
 
-        status_data = status.get('data')
-        if not isinstance(status_data, dict):
-            ui.notify('Respuesta inválida desde /status del ESP32.', color='negative')
-            return
-
-        if not status_data.get('time_valid', False):
-            config_payload = system_datetime_payload()
-            config_response = await post_json(endpoints['config'], config_payload)
-            config_data = config_response.get('data')
-            if not config_response.get('ok') or not (isinstance(config_data, dict) and config_data.get('time_valid')):
-                ui.notify('No se pudo configurar fecha/hora en el ESP32.', color='negative')
-                return
-            ui.notify('Fecha/hora enviada al ESP32. Sensores habilitados.', color='positive')
+        if result.get('synced'):
+            ui.notify('ESP32 conectado y fecha/hora sincronizada.', color='positive')
         else:
             ui.notify('ESP32 conectado con fecha/hora válida.', color='positive')
 

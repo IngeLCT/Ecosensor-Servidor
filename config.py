@@ -12,7 +12,9 @@ UI_PORT = int(os.getenv('ECOSENSOR_SERVER_PORT', '8765'))
 MDNS_HOSTNAME = os.getenv('ECOSENSOR_MDNS_HOSTNAME', 'ecosensor-servidor')
 MDNS_SERVICE_TYPE = '_http._tcp.local.'
 
+DEFAULT_ESP_HOST = f'{DEVICE_ID}.local'
+
 DEFAULT_SETTINGS = {
-    'esp_host': '',
+    'esp_host': DEFAULT_ESP_HOST,
     'device_id': DEVICE_ID,
 }

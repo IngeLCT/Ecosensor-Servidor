@@ -2,19 +2,18 @@ from typing import Any
 
 from nicegui import ui
 
-from config import DEVICE_ID
-from services.esp_client import build_endpoints, fetch_json
+from config import DEFAULT_ESP_HOST, DEVICE_ID
+from services.esp_client import autoconnect_and_sync, build_endpoints, fetch_json
 from shared.formatters import format_value, row_from_payload
 from shared.styles import add_styles
-from storage.settings_store import load_settings
+from storage.settings_store import load_settings, save_settings
 
 
 @ui.page('/dashboard')
 def dashboard() -> None:
     ui.page_title('EcoSensor Mediciones')
     add_styles()
-    settings = load_settings()
-    host = settings.get('esp_host', '')
+    load_settings()
 
     with ui.element('div').classes('dashboard'):
         with ui.element('nav').classes('top-nav'):
@@ -79,24 +78,32 @@ def dashboard() -> None:
         )
 
     async def refresh() -> None:
-        host_now = load_settings().get('esp_host', '')
+        settings_now = load_settings()
+        saved_host = settings_now.get('esp_host', DEFAULT_ESP_HOST)
+        connection = await autoconnect_and_sync(saved_host, DEFAULT_ESP_HOST)
+        host_now = connection.get('host') if connection.get('ok') else saved_host
+
+        if connection.get('ok') and host_now != settings_now.get('esp_host'):
+            settings_now['esp_host'] = host_now
+            save_settings(settings_now)
+
         endpoints_now = build_endpoints(host_now)
         row = None
         source = 'ESP32 sin lecturas válidas'
 
-        if endpoints_now['lecturas']:
+        if connection.get('ok') and endpoints_now['lecturas']:
             lecturas = await fetch_json(endpoints_now['lecturas'])
             data = lecturas.get('data') if lecturas.get('ok') else None
             if isinstance(data, dict) and data.get('valid'):
                 row = row_from_payload(data)
                 source = 'ESP32'
 
-        if not host_now:
+        if not connection.get('ok'):
             render_table(None)
             id_label.set_text(f"ID: {DEVICE_ID}")
-            start_info.set_text('Servidor sin EcoSensor configurado. Configura desde http://localhost:8765/config en el equipo servidor.')
+            start_info.set_text(f"Buscando EcoSensor: {saved_host or DEFAULT_ESP_HOST}")
             time_info.set_text('')
-            connection_info.set_text('Esperando configuración local del servidor.')
+            connection_info.set_text('Reconectando automaticamente. Si no aparece, revisa que el ESP32 este encendido y en la misma red.')
             return
 
         render_table(row)
@@ -104,7 +111,8 @@ def dashboard() -> None:
         timestamp = (row or {}).get('timestamp') or ''
         start_info.set_text(f"Host conectado: {host_now or '-'}")
         time_info.set_text(f"Fecha ultima medicion: {timestamp}" if timestamp else '')
-        connection_info.set_text(f"Fuente de datos: {source}. El servidor consulta endpoints del ESP32.")
+        sync_text = 'Hora sincronizada ahora por el servidor.' if connection.get('synced') else 'Hora del ESP32 valida.'
+        connection_info.set_text(f"{sync_text} Fuente de datos: {source}. El servidor consulta endpoints del ESP32.")
 
     refresh_button.on('click', refresh)
     ui.timer(8.0, refresh)
