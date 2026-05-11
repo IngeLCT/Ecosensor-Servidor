@@ -1,4 +1,5 @@
 import asyncio
+import json
 import math
 from dataclasses import dataclass
 from datetime import datetime
@@ -170,6 +171,63 @@ def _add_graph_styles() -> None:
             max-width: 900px;
             margin: 2em auto;
             padding: 2em 1em;
+        }
+        .double_range_slider {
+            position: relative;
+            width: 100%;
+            height: 10px;
+            background-color: #dddddd;
+            border-radius: 10px;
+            margin-top: 34px;
+        }
+        .range_track {
+            position: absolute;
+            height: 100%;
+            background-color: #95d564;
+            border-radius: 10px;
+            z-index: 1;
+        }
+        .double_range_slider input[type="range"] {
+            position: absolute;
+            width: 100%;
+            height: 10px;
+            background: none;
+            pointer-events: none;
+            -webkit-appearance: none;
+            appearance: none;
+            top: 0;
+            left: 0;
+            margin: 0;
+            z-index: 2;
+        }
+        .double_range_slider input.min { z-index: 3; }
+        .double_range_slider input::-webkit-slider-thumb {
+            height: 20px;
+            width: 20px;
+            border-radius: 50%;
+            background: #95d564;
+            border: 2px solid #2a2a2a;
+            pointer-events: auto;
+            -webkit-appearance: none;
+            cursor: pointer;
+        }
+        .double_range_slider input::-moz-range-thumb {
+            height: 20px;
+            width: 20px;
+            border-radius: 50%;
+            background: #95d564;
+            border: 2px solid #2a2a2a;
+            pointer-events: auto;
+            cursor: pointer;
+        }
+        .minvalue, .maxvalue {
+            position: absolute;
+            top: 24px;
+            transform: translateX(-50%);
+            color: #000;
+            font-size: 14px;
+            font-weight: bold;
+            white-space: nowrap;
         }
         .history-range-label {
             color: #000;
@@ -552,14 +610,20 @@ def _history_ticks(times: list[Any], minutes: int) -> tuple[list[Any], list[str]
     return tickvals, ticktext
 
 
+def _history_time_to_json(ts: Any) -> str:
+    return ts.isoformat() if hasattr(ts, 'isoformat') else str(ts)
+
+
 def _build_history_figure(labels: list[str], values: list[float], times: list[Any], spec: ChartSpec, minutes: int) -> Any:
     import plotly.graph_objects as go
 
     finite = [v for v in values if isinstance(v, (int, float)) and math.isfinite(v) and v >= 0]
     upper = max(finite) * 2 if finite and max(finite) > 0 else 1
     tickvals, ticktext = _history_ticks(times, minutes)
+    json_times = [_history_time_to_json(ts) for ts in times]
+    json_tickvals = [_history_time_to_json(ts) for ts in tickvals]
 
-    fig = go.Figure(data=[go.Bar(x=times, y=values, name=spec.title, marker={'color': spec.color})])
+    fig = go.Figure(data=[go.Bar(x=json_times, y=values, name=spec.title, marker={'color': spec.color})])
     fig.update_layout(
         height=600,
         margin={'t': 20, 'l': 60, 'r': 40, 'b': 95 if minutes == 1440 else 130},
@@ -572,7 +636,7 @@ def _build_history_figure(labels: list[str], values: list[float], times: list[An
     fig.update_xaxes(
         type='date',
         tickmode='array',
-        tickvals=tickvals,
+        tickvals=json_tickvals,
         ticktext=ticktext,
         tickangle=-30 if minutes == 1440 else -45,
         automargin=True,
@@ -598,6 +662,69 @@ def _build_history_figure(labels: list[str], values: list[float], times: list[An
         showline=True,
     )
     return fig
+
+
+def _history_slider_html(labels: list[str], start: int = 0, end: int | None = None) -> str:
+    max_idx = max(0, len(labels) - 1)
+    if end is None:
+        end = max_idx
+    start = max(0, min(start, max_idx))
+    end = max(0, min(end, max_idx))
+    if start > end:
+        start, end = end, start
+    labels_json = json.dumps(labels, ensure_ascii=False)
+    return f'''
+    <div class="double_range_slider_box">
+      <div class="double_range_slider" id="historyRangeRoot">
+        <span class="range_track" id="historyRangeTrack"></span>
+        <input type="range" class="max" min="0" max="{max_idx}" value="{end}" step="1" />
+        <input type="range" class="min" min="0" max="{max_idx}" value="{start}" step="1" />
+        <div class="minvalue">0</div>
+        <div class="maxvalue">{max_idx}</div>
+      </div>
+    </div>
+    <script>
+    (() => {{
+      const root = document.getElementById('historyRangeRoot');
+      if (!root) return;
+      const labels = {labels_json};
+      const minInput = root.querySelector('input.min');
+      const maxInput = root.querySelector('input.max');
+      const track = root.querySelector('#historyRangeTrack');
+      const minBubble = root.querySelector('.minvalue');
+      const maxBubble = root.querySelector('.maxvalue');
+      const max = Number(maxInput.max || 0);
+      const minGap = Math.min(6, max);
+      function labelAt(index) {{ return labels[Number(index)] || String(index); }}
+      function update() {{
+        let minVal = Number(minInput.value || 0);
+        let maxVal = Number(maxInput.value || 0);
+        if (maxVal - minVal < minGap) {{
+          if (document.activeElement === minInput) minVal = Math.max(0, maxVal - minGap);
+          else maxVal = Math.min(max, minVal + minGap);
+          minInput.value = minVal;
+          maxInput.value = maxVal;
+        }}
+        const denom = max || 1;
+        const left = (minVal / denom) * 100;
+        const right = 100 - (maxVal / denom) * 100;
+        track.style.left = left + '%';
+        track.style.right = right + '%';
+        minBubble.style.left = left + '%';
+        maxBubble.style.left = (maxVal / denom) * 100 + '%';
+        minBubble.textContent = labelAt(minVal);
+        maxBubble.textContent = labelAt(maxVal);
+        root.dispatchEvent(new CustomEvent('history-range-change', {{
+          bubbles: true,
+          detail: {{ start: minVal, end: maxVal }}
+        }}));
+      }}
+      minInput.addEventListener('input', update);
+      maxInput.addEventListener('input', update);
+      update();
+    }})();
+    </script>
+    '''
 
 
 def _history_table_html(labels: list[str], values: list[float], spec: ChartSpec, minutes: int) -> str:
@@ -633,6 +760,8 @@ def history_graph() -> None:
     current_values: list[float] = []
     current_times: list[Any] = []
     current_minutes = SAMPLE_BASE_MIN
+    range_start = 0
+    range_end = 0
 
     with ui.element('div').classes('dashboard'):
         _nav()
@@ -666,10 +795,7 @@ def history_graph() -> None:
 
         with ui.column().classes('history-slider-box'):
             ui.label('Seleccione el rango del historial').classes('history-select-label')
-            min_label = ui.label('').classes('history-range-label')
-            min_slider = ui.slider(min=0, max=0, value=0, step=1).props('label label-always').classes('w-full')
-            max_label = ui.label('').classes('history-range-label')
-            max_slider = ui.slider(min=0, max=0, value=0, step=1).props('label label-always').classes('w-full')
+            slider_html = ui.html(_history_slider_html([])).classes('w-full')
 
         chart = ui.plotly({}).classes('w-full chart-card')
         table = ui.html('').classes('w-full')
@@ -688,10 +814,8 @@ def history_graph() -> None:
         if not current_labels:
             return 0, 0
         max_idx = len(current_labels) - 1
-        start = int(min_slider.value or 0)
-        end = int(max_slider.value or max_idx)
-        start = max(0, min(start, max_idx))
-        end = max(0, min(end, max_idx))
+        start = max(0, min(range_start, max_idx))
+        end = max(0, min(range_end, max_idx))
         if start > end:
             start, end = end, start
         return start, end
@@ -707,23 +831,20 @@ def history_graph() -> None:
         labels = current_labels[start:end + 1]
         values = current_values[start:end + 1]
         times = current_times[start:end + 1]
-        min_label.set_text(f'Inicio: {current_labels[start] if current_labels else "-"}')
-        max_label.set_text(f'Fin: {current_labels[end] if current_labels else "-"}')
         chart.figure = _build_history_figure(labels, values, times, spec, current_minutes)
         chart.update()
         table.set_content(_history_table_html(labels, values, spec, current_minutes))
 
     async def rebuild() -> None:
-        nonlocal current_labels, current_values, current_times
+        nonlocal current_labels, current_values, current_times, range_start, range_end
         if frame_cache is None:
             return
         spec = HISTORY_OPTIONS[str(selector.value)]
         current_labels, current_values, current_times = _history_series_data(frame_cache, spec, current_minutes)
         max_idx = max(0, len(current_labels) - 1)
-        min_slider.props(f'min=0 max={max_idx} step=1')
-        max_slider.props(f'min=0 max={max_idx} step=1')
-        min_slider.set_value(0)
-        max_slider.set_value(max_idx)
+        range_start = 0
+        range_end = max_idx
+        slider_html.set_content(_history_slider_html(current_labels, range_start, range_end))
         update_interval_buttons()
         await redraw()
 
@@ -746,10 +867,21 @@ def history_graph() -> None:
         except Exception as exc:
             status.set_text(f'Error al cargar historial: {exc}')
 
-    async def on_slider_change() -> None:
+    async def on_history_range_change(e) -> None:
+        nonlocal range_start, range_end
+        args = getattr(e, 'args', None)
+        if isinstance(args, dict):
+            range_start = int(args.get('start', range_start))
+            range_end = int(args.get('end', range_end))
+        elif isinstance(args, (list, tuple)) and len(args) >= 2:
+            range_start = int(args[0])
+            range_end = int(args[1])
         await redraw()
 
     selector.on('update:model-value', lambda: ui.timer(0.1, rebuild, once=True))
-    min_slider.on('update:model-value', lambda: ui.timer(0.1, on_slider_change, once=True))
-    max_slider.on('update:model-value', lambda: ui.timer(0.1, on_slider_change, once=True))
+    slider_html.on(
+        'history-range-change',
+        on_history_range_change,
+        args=['event.detail.start', 'event.detail.end'],
+    )
     ui.timer(0.1, load_history, once=True)
