@@ -7,6 +7,7 @@ from services.esp_client import autoconnect_and_sync, build_endpoints, fetch_jso
 from shared.formatters import format_value, row_from_payload
 from shared.styles import add_styles
 from storage.settings_store import load_settings, save_settings
+from pages.pollutants_modal import pollutants_info_card
 
 
 @ui.page('/dashboard')
@@ -26,21 +27,7 @@ def dashboard() -> None:
         ui.label('Mediciones Ambientales').classes('section-title')
         id_label = ui.label('').classes('text-xl font-bold min-h-[32px]')
 
-        with ui.element('section').classes('pollutant-card w-full mt-4'):
-            ui.label('Información sobre contaminantes').classes('text-lg font-bold')
-            ui.label(
-                'Referencia visual de los contaminantes monitoreados por el EcoSensor.'
-            ).classes('text-base')
-            with ui.element('div').classes('thumbs mt-3'):
-                for filename, label in (
-                    ('pm.png', 'PM2.5'),
-                    ('co2.png', 'CO2'),
-                    ('voc.png', 'VOC'),
-                    ('nox.png', 'NOx'),
-                ):
-                    with ui.element('div').classes('thumb'):
-                        ui.image(f'/static/{filename}')
-                        ui.label(label)
+        pollutants_info_card()
 
         table = ui.html('').classes('w-full')
         date_info = ui.label('').classes('status-line mt-6')
