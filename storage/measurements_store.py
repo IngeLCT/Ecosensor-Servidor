@@ -95,13 +95,26 @@ def get_latest_measurement() -> dict[str, Any] | None:
     return _measurement_row_to_dict(row) if row else None
 
 
+def _split_device_timestamp(timestamp: str | None) -> tuple[str, str]:
+    value = (timestamp or '').strip()
+    if not value:
+        return '', ''
+    if 'T' in value:
+        date_part, time_part = value.split('T', 1)
+        return date_part, time_part.rstrip('Z').split('+', 1)[0].split('-', 1)[0]
+    if ' ' in value:
+        date_part, time_part = value.split(' ', 1)
+        return date_part, time_part.rstrip('Z')
+    return value, ''
+
+
 def measurements_csv_text() -> str:
     ensure_db()
     output = io.StringIO()
     fieldnames = [
-        'id', 'device_id', 'host', 'device_timestamp', 'received_at',
-        'pm1p0', 'pm2p5', 'pm4p0', 'pm10p0',
-        'voc', 'nox', 'co2', 'temp', 'hum', 'window_s',
+        'id', 'device_id', 'Fecha de medicion', 'Hora de medicion',
+        'PM1.0', 'PM2.5', 'PM4.0', 'PM10.0',
+        'VOC', 'NOx', 'CO2', 'Temperatura', 'Humedad',
     ]
     writer = csv.DictWriter(output, fieldnames=fieldnames)
     writer.writeheader()
@@ -110,15 +123,30 @@ def measurements_csv_text() -> str:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             '''
-            SELECT id, device_id, host, device_timestamp, received_at,
+            SELECT id, device_id, device_timestamp,
                    pm1p0, pm2p5, pm4p0, pm10p0,
-                   voc, nox, co2, temp, hum, window_s
+                   voc, nox, co2, temp, hum
             FROM measurements
             ORDER BY received_at ASC, id ASC
             '''
         )
         for row in rows:
-            writer.writerow(dict(row))
+            date_part, time_part = _split_device_timestamp(row['device_timestamp'])
+            writer.writerow({
+                'id': row['id'],
+                'device_id': row['device_id'],
+                'Fecha de medicion': date_part,
+                'Hora de medicion': time_part,
+                'PM1.0': row['pm1p0'],
+                'PM2.5': row['pm2p5'],
+                'PM4.0': row['pm4p0'],
+                'PM10.0': row['pm10p0'],
+                'VOC': row['voc'],
+                'NOx': row['nox'],
+                'CO2': row['co2'],
+                'Temperatura': row['temp'],
+                'Humedad': row['hum'],
+            })
 
     return output.getvalue()
 
