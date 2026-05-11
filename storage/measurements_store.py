@@ -1,3 +1,5 @@
+import csv
+import io
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any
@@ -55,6 +57,70 @@ def _int_or_none(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _measurement_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        'id': row['device_id'],
+        'host': row['host'],
+        'timestamp': row['device_timestamp'],
+        'received_at': row['received_at'],
+        'pm1p0': row['pm1p0'],
+        'pm2p5': row['pm2p5'],
+        'pm4p0': row['pm4p0'],
+        'pm10p0': row['pm10p0'],
+        'voc': row['voc'],
+        'nox': row['nox'],
+        'co2': row['co2'],
+        'temp': row['temp'],
+        'hum': row['hum'],
+        'window_s': row['window_s'],
+    }
+
+
+def get_latest_measurement() -> dict[str, Any] | None:
+    ensure_db()
+    with sqlite3.connect(MEASUREMENTS_DB_FILE) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            '''
+            SELECT device_id, host, device_timestamp, received_at,
+                   pm1p0, pm2p5, pm4p0, pm10p0,
+                   voc, nox, co2, temp, hum, window_s
+            FROM measurements
+            ORDER BY received_at DESC, id DESC
+            LIMIT 1
+            '''
+        ).fetchone()
+    return _measurement_row_to_dict(row) if row else None
+
+
+def measurements_csv_text() -> str:
+    ensure_db()
+    output = io.StringIO()
+    fieldnames = [
+        'id', 'device_id', 'host', 'device_timestamp', 'received_at',
+        'pm1p0', 'pm2p5', 'pm4p0', 'pm10p0',
+        'voc', 'nox', 'co2', 'temp', 'hum', 'window_s',
+    ]
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+
+    with sqlite3.connect(MEASUREMENTS_DB_FILE) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            '''
+            SELECT id, device_id, host, device_timestamp, received_at,
+                   pm1p0, pm2p5, pm4p0, pm10p0,
+                   voc, nox, co2, temp, hum, window_s
+            FROM measurements
+            ORDER BY received_at ASC, id ASC
+            '''
+        )
+        for row in rows:
+            writer.writerow(dict(row))
+
+    return output.getvalue()
 
 
 def save_measurement(host: str, row: dict[str, Any]) -> bool:

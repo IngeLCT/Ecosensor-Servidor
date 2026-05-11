@@ -8,7 +8,7 @@ from services.esp_client import autoconnect_and_sync, build_endpoints, fetch_jso
 from shared.formatters import format_value, row_from_payload
 from shared.styles import add_styles
 from pages.pollutants_modal import pollutants_info_card
-from storage.measurements_store import save_measurement
+from storage.measurements_store import get_latest_measurement, save_measurement
 from storage.settings_store import load_settings, save_settings
 
 
@@ -35,11 +35,12 @@ def dashboard() -> None:
         date_info = ui.label('').classes('status-line mt-6')
         time_info = ui.label('').classes('status-line')
         connection_info = ui.label('').classes('status-line mt-3')
+        with ui.row().classes('justify-center gap-3 mt-4'):
+            ui.button('Descargar CSV', on_click=lambda: ui.navigate.to('/api/measurements.csv')).props('unelevated')
 
     def render_table(row: dict[str, Any] | None) -> None:
         if not row:
             table.set_content(
-                '<div style="margin:20px 0;font-size:32px;font-weight:700;">Esperando Datos...</div>'
                 '<table class="measure-table"><tr><th>Mediciones</th><th>Valor</th><th>Unidad</th></tr></table>'
             )
             return
@@ -102,16 +103,11 @@ def dashboard() -> None:
                 if row:
                     await asyncio.to_thread(save_measurement, host_now, row)
 
-        if not connection.get('ok'):
-            render_table(None)
-            id_label.set_text(f"ID: {display_host(saved_host or DEFAULT_ESP_HOST)}")
-            date_info.set_text('')
-            time_info.set_text('')
-            connection_info.set_text('Reconectando automaticamente. Si no aparece, revisa que el ESP32 este encendido y en la misma red.')
-            return
+        if not row:
+            row = await asyncio.to_thread(get_latest_measurement)
 
         render_table(row)
-        id_label.set_text(f"ID: {display_host(host_now)}")
+        id_label.set_text(f"ID: {display_host((row or {}).get('host') or host_now)}")
         timestamp = (row or {}).get('timestamp') or ''
         date_part, time_part = split_timestamp(timestamp)
         date_info.set_text(f"Fecha ultima medicion: {date_part}" if date_part else '')
