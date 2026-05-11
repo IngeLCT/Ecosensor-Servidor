@@ -108,6 +108,89 @@ def _split_device_timestamp(timestamp: str | None) -> tuple[str, str]:
     return value, ''
 
 
+def _graph_row(row: sqlite3.Row) -> dict[str, Any]:
+    fecha, hora = _split_device_timestamp(row['device_timestamp'])
+    return {
+        '_row_id': row['id'],
+        'id': row['device_id'],
+        'device_id': row['device_id'],
+        'fecha': fecha,
+        'hora': hora,
+        'pm1p0': row['pm1p0'],
+        'pm2p5': row['pm2p5'],
+        'pm4p0': row['pm4p0'],
+        'pm10p0': row['pm10p0'],
+        'voc': row['voc'],
+        'nox': row['nox'],
+        'co2': row['co2'],
+        'temp': row['temp'],
+        'hum': row['hum'],
+    }
+
+
+def graph_latest_row() -> dict[str, Any] | None:
+    ensure_db()
+    with sqlite3.connect(MEASUREMENTS_DB_FILE) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            '''
+            SELECT id, device_id, device_timestamp,
+                   pm1p0, pm2p5, pm4p0, pm10p0,
+                   voc, nox, co2, temp, hum
+            FROM measurements
+            ORDER BY id DESC
+            LIMIT 1
+            '''
+        ).fetchone()
+    return _graph_row(row) if row else None
+
+
+def graph_rows_history(limit: int = 5000) -> list[dict[str, Any]]:
+    ensure_db()
+    limit = max(1, min(20000, int(limit)))
+    with sqlite3.connect(MEASUREMENTS_DB_FILE) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            '''
+            SELECT id, device_id, device_timestamp,
+                   pm1p0, pm2p5, pm4p0, pm10p0,
+                   voc, nox, co2, temp, hum
+            FROM (
+                SELECT id, device_id, device_timestamp,
+                       pm1p0, pm2p5, pm4p0, pm10p0,
+                       voc, nox, co2, temp, hum
+                FROM measurements
+                ORDER BY id DESC
+                LIMIT ?
+            ) t
+            ORDER BY id ASC
+            ''',
+            (limit,),
+        ).fetchall()
+    return [_graph_row(row) for row in rows]
+
+
+def graph_rows_since(row_id: int, limit: int = 500) -> list[dict[str, Any]]:
+    ensure_db()
+    row_id = max(0, int(row_id))
+    limit = max(1, min(20000, int(limit)))
+    with sqlite3.connect(MEASUREMENTS_DB_FILE) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            '''
+            SELECT id, device_id, device_timestamp,
+                   pm1p0, pm2p5, pm4p0, pm10p0,
+                   voc, nox, co2, temp, hum
+            FROM measurements
+            WHERE id > ?
+            ORDER BY id ASC
+            LIMIT ?
+            ''',
+            (row_id, limit),
+        ).fetchall()
+    return [_graph_row(row) for row in rows]
+
+
 def measurements_csv_text() -> str:
     ensure_db()
     output = io.StringIO()

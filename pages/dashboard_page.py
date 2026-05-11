@@ -15,6 +15,8 @@ from storage.settings_store import load_settings, save_settings
 @ui.page('/dashboard')
 def dashboard() -> None:
     ui.page_title('EcoSensor Mediciones')
+    ui.add_head_html('<link rel="stylesheet" href="/static/ecosensor_charts.css">')
+    ui.add_head_html('<script src="/static/ecosensor_charts.js" defer></script>')
     add_styles()
     load_settings()
 
@@ -35,6 +37,7 @@ def dashboard() -> None:
         date_info = ui.html('').classes('status-line mt-6')
         time_info = ui.html('').classes('status-line')
         connection_info = ui.label('').classes('status-line mt-3')
+        ui.html('<div id="ecosensor-charts"></div>').classes('w-full')
         with ui.row().classes('justify-center gap-3 mt-4'):
             ui.button('Descargar CSV', on_click=lambda: ui.navigate.to('/api/measurements.csv')).props('unelevated')
 
