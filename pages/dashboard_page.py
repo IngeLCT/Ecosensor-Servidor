@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any
 
 from nicegui import ui
@@ -6,8 +7,9 @@ from config import DEFAULT_ESP_HOST, DEVICE_ID
 from services.esp_client import autoconnect_and_sync, build_endpoints, fetch_json
 from shared.formatters import format_value, row_from_payload
 from shared.styles import add_styles
-from storage.settings_store import load_settings, save_settings
 from pages.pollutants_modal import pollutants_info_card
+from storage.measurements_store import save_measurement
+from storage.settings_store import load_settings, save_settings
 
 
 @ui.page('/dashboard')
@@ -97,6 +99,8 @@ def dashboard() -> None:
             data = lecturas.get('data') if lecturas.get('ok') else None
             if isinstance(data, dict) and data.get('valid'):
                 row = row_from_payload(data)
+                if row:
+                    await asyncio.to_thread(save_measurement, host_now, row)
 
         if not connection.get('ok'):
             render_table(None)

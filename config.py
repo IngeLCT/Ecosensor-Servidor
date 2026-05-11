@@ -5,6 +5,7 @@ APP_DIR = Path(__file__).resolve().parent
 DATA_DIR = APP_DIR / 'data'
 STATIC_DIR = APP_DIR / 'static'
 SETTINGS_FILE = DATA_DIR / 'settings.json'
+MEASUREMENTS_DB_FILE = DATA_DIR / 'measurements.sqlite3'
 
 DEVICE_ID = 'ecosensor01'
 UI_HOST = os.getenv('ECOSENSOR_SERVER_HOST', '0.0.0.0')
