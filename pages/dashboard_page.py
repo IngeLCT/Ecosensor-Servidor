@@ -43,12 +43,9 @@ def dashboard() -> None:
                         ui.label(label)
 
         table = ui.html('').classes('w-full')
-        start_info = ui.label('').classes('status-line mt-6')
+        date_info = ui.label('').classes('status-line mt-6')
         time_info = ui.label('').classes('status-line')
         connection_info = ui.label('').classes('status-line mt-3')
-
-        with ui.row().classes('justify-center gap-3 mt-4'):
-            refresh_button = ui.button('Actualizar')
 
     def render_table(row: dict[str, Any] | None) -> None:
         if not row:
@@ -77,6 +74,24 @@ def dashboard() -> None:
             '</table>'
         )
 
+    def display_host(host: str) -> str:
+        clean = (host or DEVICE_ID).strip()
+        if clean.endswith('.local'):
+            clean = clean[:-6]
+        return clean or DEVICE_ID
+
+    def split_timestamp(timestamp: str) -> tuple[str, str]:
+        value = (timestamp or '').strip()
+        if not value:
+            return '', ''
+        if 'T' in value:
+            date_part, time_part = value.split('T', 1)
+            return date_part, time_part.rstrip('Z').split('+', 1)[0].split('-', 1)[0]
+        if ' ' in value:
+            date_part, time_part = value.split(' ', 1)
+            return date_part, time_part.rstrip('Z')
+        return value, ''
+
     async def refresh() -> None:
         settings_now = load_settings()
         saved_host = settings_now.get('esp_host', DEFAULT_ESP_HOST)
@@ -89,31 +104,28 @@ def dashboard() -> None:
 
         endpoints_now = build_endpoints(host_now)
         row = None
-        source = 'ESP32 sin lecturas válidas'
 
         if connection.get('ok') and endpoints_now['lecturas']:
             lecturas = await fetch_json(endpoints_now['lecturas'])
             data = lecturas.get('data') if lecturas.get('ok') else None
             if isinstance(data, dict) and data.get('valid'):
                 row = row_from_payload(data)
-                source = 'ESP32'
 
         if not connection.get('ok'):
             render_table(None)
-            id_label.set_text(f"ID: {DEVICE_ID}")
-            start_info.set_text(f"Buscando EcoSensor: {saved_host or DEFAULT_ESP_HOST}")
+            id_label.set_text(f"ID: {display_host(saved_host or DEFAULT_ESP_HOST)}")
+            date_info.set_text('')
             time_info.set_text('')
             connection_info.set_text('Reconectando automaticamente. Si no aparece, revisa que el ESP32 este encendido y en la misma red.')
             return
 
         render_table(row)
-        id_label.set_text(f"ID: {(row or {}).get('id', DEVICE_ID)}")
+        id_label.set_text(f"ID: {display_host(host_now)}")
         timestamp = (row or {}).get('timestamp') or ''
-        start_info.set_text(f"Host conectado: {host_now or '-'}")
-        time_info.set_text(f"Fecha ultima medicion: {timestamp}" if timestamp else '')
-        sync_text = 'Hora sincronizada ahora por el servidor.' if connection.get('synced') else 'Hora del ESP32 valida.'
-        connection_info.set_text(f"{sync_text} Fuente de datos: {source}. El servidor consulta endpoints del ESP32.")
+        date_part, time_part = split_timestamp(timestamp)
+        date_info.set_text(f"Fecha ultima medicion: {date_part}" if date_part else '')
+        time_info.set_text(f"Hora ultima medicion: {time_part}" if time_part else '')
+        connection_info.set_text('')
 
-    refresh_button.on('click', refresh)
     ui.timer(8.0, refresh)
     ui.timer(0.1, refresh, once=True)
