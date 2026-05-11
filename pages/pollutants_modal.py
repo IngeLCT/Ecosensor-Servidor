@@ -104,7 +104,7 @@ def pollutants_info_card() -> None:
             margin-bottom: 24px;
             width: 100%;
         }
-
+    
         .card-pollutants-title-ng {
             color: #000;
             font-size: 26px;
@@ -114,7 +114,7 @@ def pollutants_info_card() -> None:
             display: block;
             margin: 0;
         }
-
+    
         .card-pollutants-sub-ng {
             color: #000;
             font-size: 20px;
@@ -123,7 +123,7 @@ def pollutants_info_card() -> None:
             display: block;
             margin: 12px 0 18px;
         }
-
+    
         .thumbs-ng {
             display: grid;
             gap: 26px;
@@ -132,19 +132,19 @@ def pollutants_info_card() -> None:
             align-items: start;
             width: 100%;
         }
-
+    
         @media (max-width: 960px) {
             .thumbs-ng {
                 grid-template-columns: repeat(2, minmax(160px, 1fr));
             }
         }
-
+    
         @media (max-width: 520px) {
             .thumbs-ng {
                 grid-template-columns: 1fr;
             }
         }
-
+    
         .thumb-ng {
             display: flex !important;
             flex-direction: column !important;
@@ -161,7 +161,7 @@ def pollutants_info_card() -> None:
             min-height: auto !important;
             width: 190px !important;
         }
-
+    
         .thumb-ng .q-btn__content {
             display: flex !important;
             flex-direction: column !important;
@@ -170,7 +170,7 @@ def pollutants_info_card() -> None:
             gap: 8px !important;
             width: 100%;
         }
-
+    
         .thumb-img-ng {
             width: 180px;
             height: 100px;
@@ -182,12 +182,12 @@ def pollutants_info_card() -> None:
             box-shadow: 0 3px 10px rgba(0,0,0,.12);
             transition: transform .13s ease, box-shadow .13s ease;
         }
-
+    
         .thumb-ng:hover .thumb-img-ng {
             transform: translateY(-2px);
             box-shadow: 0 6px 16px rgba(0,0,0,.18);
         }
-
+    
         .thumb-label-ng {
             margin-top: 4px;
             color: #0f2741;
@@ -195,37 +195,47 @@ def pollutants_info_card() -> None:
             font-size: 18px;
             text-align: center;
         }
-
+    
         .pollutant-dialog-card-ng {
             width: min(96vw, 1400px) !important;
             height: calc(100vh - 8vh) !important;
+            height: calc(100dvh - 8vh) !important;
+            max-height: calc(100vh - 8vh) !important;
+            max-height: calc(100dvh - 8vh) !important;
             max-width: 1400px !important;
             background: #cce5dc !important;
             border-radius: 14px !important;
             overflow: hidden;
             padding: 0 !important;
+            display: flex !important;
+            flex-direction: column !important;
         }
-
+    
         .pollutant-dialog-header-ng {
             background: #80ffd4;
             color: #000;
             padding: .9rem 1.1rem;
             width: 100%;
+            flex: 0 0 auto;
         }
-
+    
         .pollutant-dialog-title-ng {
             font-size: clamp(20px, 1.75vw, 32px);
             font-weight: bold;
+            line-height: 1.2;
         }
-
+    
         .pollutant-dialog-body-ng {
-            flex: 1;
+            flex: 1 1 auto;
             min-height: 0;
             padding: 1.1rem 1.2rem 1.4rem;
             overflow-y: auto;
+            overflow-x: hidden;
             width: 100%;
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior: contain;
         }
-
+    
         .pollutant-modal-grid-ng {
             display: grid;
             grid-template-columns: 1.05fr 1fr;
@@ -233,39 +243,33 @@ def pollutants_info_card() -> None:
             min-height: 0;
             height: 100%;
         }
-
-        @media (max-width: 860px) {
-            .pollutant-modal-grid-ng {
-                grid-template-columns: 1fr;
-            }
-        }
-
+    
         .pollutant-text-ng {
             text-align: left;
             font-size: clamp(16px, 1.2vw, 22px);
             line-height: 1.5;
         }
-
+    
         .pollutant-text-ng h4 {
             font-size: clamp(20px, 1.75vw, 30px);
             margin: .2rem 0 .6rem;
             font-weight: bold;
         }
-
+    
         .pollutant-text-ng h5 {
             font-size: clamp(16px, 1.25vw, 22px);
             margin: .6rem 0;
             line-height: 1.5;
         }
-
+    
         .pollutant-text-ng ul {
             margin: .4rem 0 0 1.1rem;
         }
-
+    
         .pollutant-text-ng li {
             margin: .45rem 0;
         }
-
+    
         .pollutant-image-card-ng {
             display: grid;
             grid-template-rows: minmax(0, 1fr) auto;
@@ -275,20 +279,89 @@ def pollutants_info_card() -> None:
             border-radius: 10px;
             background: #cce5dc;
         }
-
+    
         .pollutant-image-card-ng img {
             width: 100%;
             height: 100%;
             max-height: 100%;
             object-fit: contain;
         }
-
+    
         .pollutant-caption-ng {
             padding: .35rem .6rem;
             font-size: 18px;
             color: #404040;
             background: #cce5dc;
             text-align: center;
+        }
+    
+        /* Ajuste especial para celular */
+        @media (max-width: 860px) {
+            .pollutant-dialog-card-ng {
+                width: 96vw !important;
+                height: calc(100vh - 24px) !important;
+                height: calc(100dvh - 24px) !important;
+                max-height: calc(100vh - 24px) !important;
+                max-height: calc(100dvh - 24px) !important;
+                border-radius: 12px !important;
+            }
+    
+            .pollutant-dialog-header-ng {
+                padding: .75rem .9rem;
+            }
+    
+            .pollutant-dialog-title-ng {
+                font-size: 20px;
+                line-height: 1.2;
+            }
+    
+            .pollutant-dialog-body-ng {
+                flex: 1 1 auto;
+                min-height: 0;
+                padding: 1rem;
+                overflow-y: auto;
+                overflow-x: hidden;
+                -webkit-overflow-scrolling: touch;
+            }
+    
+            .pollutant-modal-grid-ng {
+                grid-template-columns: 1fr;
+                height: auto;
+                min-height: auto;
+                gap: 1rem;
+            }
+    
+            .pollutant-text-ng {
+                font-size: 16px;
+                line-height: 1.45;
+            }
+    
+            .pollutant-text-ng h4 {
+                font-size: 20px;
+            }
+    
+            .pollutant-text-ng h5 {
+                font-size: 16px;
+            }
+    
+            .pollutant-image-card-ng {
+                height: auto;
+                min-height: auto;
+                overflow: visible;
+            }
+    
+            .pollutant-image-card-ng img {
+                width: 100%;
+                height: auto;
+                max-height: 60vh;
+                max-height: 60dvh;
+                object-fit: contain;
+                display: block;
+            }
+    
+            .pollutant-caption-ng {
+                font-size: 15px;
+            }
         }
     </style>
     ''')
