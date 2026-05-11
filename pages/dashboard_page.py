@@ -1,28 +1,26 @@
-import asyncio
 from typing import Any
 
 from nicegui import ui
 
-from config import DEFAULT_ESP_HOST, DEVICE_ID
-from services.esp_client import autoconnect_and_sync, build_endpoints, fetch_json
-from shared.formatters import format_value, row_from_payload
+from services.measurement_sync import display_host, sync_latest_measurements
+from shared.formatters import format_value
 from shared.styles import add_styles
 from pages.pollutants_modal import pollutants_info_card
-from storage.measurements_store import get_latest_measurement, save_measurement
-from storage.settings_store import load_settings, save_settings
+from storage.settings_store import load_settings
 
 
 @ui.page('/dashboard')
 def dashboard() -> None:
     ui.page_title('EcoSensor Mediciones')
-    ui.add_head_html('<link rel="stylesheet" href="/static/ecosensor_charts.css">')
-    ui.add_head_html('<script src="/static/ecosensor_charts.js" defer></script>')
     add_styles()
     load_settings()
 
     with ui.element('div').classes('dashboard'):
         with ui.element('nav').classes('top-nav'):
             ui.link('Mediciones', '/dashboard')
+            ui.link('Partículas', '/graficas/particulas')
+            ui.link('VOC NOx', '/graficas/voc-nox')
+            ui.link('Ambientales', '/graficas/ambientales')
 
         with ui.column().classes('items-center justify-center gap-3'):
             ui.label('LCT Didacticos').classes('brand-title')
@@ -37,9 +35,12 @@ def dashboard() -> None:
         date_info = ui.html('').classes('status-line mt-6')
         time_info = ui.html('').classes('status-line')
         connection_info = ui.label('').classes('status-line mt-3')
-        ui.html('<div id="ecosensor-charts"></div>').classes('w-full')
         with ui.row().classes('justify-center gap-3 mt-4'):
-            ui.button('Descargar CSV', on_click=lambda: ui.navigate.to('/api/measurements.csv')).props('unelevated')
+            ui.button('Ver Partículas', on_click=lambda: ui.navigate.to('/graficas/particulas')).props('unelevated')
+            ui.button('Ver VOC NOx', on_click=lambda: ui.navigate.to('/graficas/voc-nox')).props('unelevated')
+            ui.button('Ver Ambientales', on_click=lambda: ui.navigate.to('/graficas/ambientales')).props('unelevated')
+        with ui.row().classes('justify-center gap-3 mt-4'):
+            ui.button('Descargar CSV', on_click=lambda: ui.navigate.to('/api/measurements.csv')).props('flat')
 
     def render_table(row: dict[str, Any] | None) -> None:
         if not row:
@@ -66,12 +67,6 @@ def dashboard() -> None:
             f'{html_rows}'
             '</table>'
         )
-
-    def display_host(host: str) -> str:
-        clean = (host or DEVICE_ID).strip()
-        if clean.endswith('.local'):
-            clean = clean[:-6]
-        return clean or DEVICE_ID
 
     def format_date_dd_mm_yyyy(date_value: str) -> str:
         value = (date_value or '').strip()
@@ -125,31 +120,10 @@ def dashboard() -> None:
         return format_date_dd_mm_yyyy(value), ''
 
     async def refresh() -> None:
-        settings_now = load_settings()
-        saved_host = settings_now.get('esp_host', DEFAULT_ESP_HOST)
-        connection = await autoconnect_and_sync(saved_host, DEFAULT_ESP_HOST)
-        host_now = connection.get('host') if connection.get('ok') else saved_host
-
-        if connection.get('ok') and host_now != settings_now.get('esp_host'):
-            settings_now['esp_host'] = host_now
-            save_settings(settings_now)
-
-        endpoints_now = build_endpoints(host_now)
-        row = None
-
-        if connection.get('ok') and endpoints_now['lecturas']:
-            lecturas = await fetch_json(endpoints_now['lecturas'])
-            data = lecturas.get('data') if lecturas.get('ok') else None
-            if isinstance(data, dict) and data.get('valid'):
-                row = row_from_payload(data)
-                if row:
-                    await asyncio.to_thread(save_measurement, host_now, row)
-
-        if not row:
-            row = await asyncio.to_thread(get_latest_measurement)
+        row = await sync_latest_measurements()
 
         render_table(row)
-        id_label.set_text(f"ID: {display_host((row or {}).get('host') or host_now)}")
+        id_label.set_text(f"ID: {display_host((row or {}).get('host') or '')}")
         timestamp = (row or {}).get('timestamp') or ''
         date_part, time_part = split_timestamp(timestamp)
         date_info.set_content(

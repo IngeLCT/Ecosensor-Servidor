@@ -16,6 +16,7 @@ from services.mdns_service import start_mdns_service
 from storage.measurements_store import graph_latest_row, graph_rows_history, graph_rows_since, measurements_csv_text
 import pages.connect_page  # registra / y /config
 import pages.dashboard_page  # registra /dashboard
+import pages.graphs_page  # registra /graficas/*
 
 app.add_static_files('/static', STATIC_DIR)
 
