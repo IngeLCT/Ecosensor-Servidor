@@ -17,10 +17,14 @@ def dashboard() -> None:
 
     with ui.element('div').classes('dashboard'):
         with ui.element('nav').classes('top-nav'):
-            ui.link('Mediciones', '/dashboard')
-            ui.link('Partículas', '/graficas/particulas')
-            ui.link('VOC NOx', '/graficas/voc-nox')
-            ui.link('Ambientales', '/graficas/ambientales')
+            ui.link('Inicio', '/dashboard')
+            ui.label('|')
+            ui.link('Gráficas Partículas', '/graficas/particulas')
+            ui.label('|')
+            ui.link('Gráficas VOC & NOx', '/graficas/voc-nox')
+            ui.label('|')
+            ui.link('Gráficas CO2, Temperatura & Humedad', '/graficas/ambientales')
+            ui.label('|')
 
         with ui.column().classes('items-center justify-center gap-3'):
             ui.label('LCT Didacticos').classes('brand-title')
@@ -35,10 +39,6 @@ def dashboard() -> None:
         date_info = ui.html('').classes('status-line mt-6')
         time_info = ui.html('').classes('status-line')
         connection_info = ui.label('').classes('status-line mt-3')
-        with ui.row().classes('justify-center gap-3 mt-4'):
-            ui.button('Ver Partículas', on_click=lambda: ui.navigate.to('/graficas/particulas')).props('unelevated')
-            ui.button('Ver VOC NOx', on_click=lambda: ui.navigate.to('/graficas/voc-nox')).props('unelevated')
-            ui.button('Ver Ambientales', on_click=lambda: ui.navigate.to('/graficas/ambientales')).props('unelevated')
         with ui.row().classes('justify-center gap-3 mt-4'):
             ui.button('Descargar CSV', on_click=lambda: ui.navigate.to('/api/measurements.csv')).props('flat')
 

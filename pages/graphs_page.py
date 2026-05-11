@@ -1,4 +1,7 @@
 import asyncio
+import math
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from nicegui import ui
@@ -8,148 +11,312 @@ from shared.styles import add_styles
 from storage.measurements_store import graph_rows_history
 
 
-Series = list[tuple[str, str, str]]
-
-
-PARTICLE_SERIES: Series = [
-    ('pm1p0', 'PM1.0', 'µg/m³'),
-    ('pm2p5', 'PM2.5', 'µg/m³'),
-    ('pm4p0', 'PM4.0', 'µg/m³'),
-    ('pm10p0', 'PM10.0', 'µg/m³'),
-]
-
-VOC_NOX_SERIES: Series = [
-    ('voc', 'VOC', 'Index'),
-    ('nox', 'NOx', 'Index'),
-]
-
-AMBIENT_SERIES: Series = [
-    ('co2', 'CO2', 'ppm'),
-    ('temp', 'Temperatura', '°C'),
-    ('hum', 'Humedad', '%'),
+MAX_BARS = 24
+INITIAL_FETCH_LIMIT = 5000
+SAMPLE_BASE_MIN = 5
+MENU = [
+    ('5 min', 5),
+    ('15 min', 15),
+    ('30 min', 30),
+    ('1 hr', 60),
+    ('2 hr', 120),
+    ('4 hr', 240),
 ]
 
 
-COLOR_MAP = {
-    'pm1p0': '#2563eb',
-    'pm2p5': '#16a34a',
-    'pm4p0': '#f97316',
-    'pm10p0': '#dc2626',
-    'voc': '#7c3aed',
-    'nox': '#0891b2',
-    'co2': '#0f766e',
-    'temp': '#ea580c',
-    'hum': '#0284c7',
-}
+@dataclass(frozen=True)
+class ChartSpec:
+    key: str
+    title: str
+    unit: str
+    color: str
+    coverage: float = 0.90
+    round_values: bool = False
+
+    @property
+    def y_title(self) -> str:
+        return f'{self.title} {self.unit}' if self.unit.startswith(('(', 'µ')) else f'{self.title} ({self.unit})'
+
+
+PARTICLE_CHARTS = [
+    ChartSpec('pm1p0', 'PM1.0', 'µg/m³', '#ff0000'),
+    ChartSpec('pm2p5', 'PM2.5', 'µg/m³', '#bfa600'),
+    ChartSpec('pm4p0', 'PM4.0', 'µg/m³', '#00bfbf'),
+    ChartSpec('pm10p0', 'PM10.0', 'µg/m³', '#bf00ff'),
+]
+
+VOC_NOX_CHARTS = [
+    ChartSpec('voc', 'VOC', 'Index', '#ff8000'),
+    ChartSpec('nox', 'NOx', 'Index', '#00ff00'),
+]
+
+AMBIENT_CHARTS = [
+    ChartSpec('co2', 'CO2', 'ppm', '#990000', coverage=0.85),
+    ChartSpec('temp', 'Temperatura', '°C', '#006600', coverage=0.85),
+    ChartSpec('hum', 'Humedad relativa', '%', '#0000cc', coverage=0.85, round_values=True),
+]
 
 
 def _nav() -> None:
     with ui.element('nav').classes('top-nav'):
-        ui.link('Mediciones', '/dashboard')
-        ui.link('Partículas', '/graficas/particulas')
-        ui.link('VOC NOx', '/graficas/voc-nox')
-        ui.link('Ambientales', '/graficas/ambientales')
+        ui.link('Inicio', '/dashboard')
+        ui.label('|')
+        ui.link('Gráficas Partículas', '/graficas/particulas')
+        ui.label('|')
+        ui.link('Gráficas VOC & NOx', '/graficas/voc-nox')
+        ui.label('|')
+        ui.link('Gráficas CO2, Temperatura & Humedad', '/graficas/ambientales')
+        ui.label('|')
 
 
-def _x_axis(rows: list[dict[str, Any]]) -> list[str]:
-    labels: list[str] = []
-    for row in rows:
-        fecha = str(row.get('fecha') or '').strip()
-        hora = str(row.get('hora') or '').strip()
-        if fecha or hora:
-            labels.append(f'{fecha} {hora}'.strip())
-        else:
-            labels.append(str(row.get('_row_id') or ''))
-    return labels
+def _add_graph_styles() -> None:
+    ui.add_head_html(
+        '''
+        <style>
+        .chart-card {
+            width: 100%;
+            max-width: 1200px;
+            margin: 30px auto;
+            background: #cce5dc;
+            border-radius: 10px;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .agg-toolbar-wrap {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin: 8px 0 4px 0;
+            width: 100%;
+        }
+        .agg-chart-title {
+            font-weight: bold;
+            font-size: 20px;
+            font-family: Arial, sans-serif;
+            color: #000;
+            text-align: center;
+            line-height: 1.1;
+        }
+        .agg-toolbar-label {
+            font-weight: bold;
+            font-size: 16px;
+            font-family: Arial, sans-serif;
+            color: #000;
+            text-align: left;
+        }
+        .agg-toolbar {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: flex-start;
+        }
+        .agg-btn {
+            cursor: pointer;
+            user-select: none;
+            padding: 6px 10px;
+            border-radius: 10px;
+            background: #e9f4ef !important;
+            border: 2px solid #2a2a2a !important;
+            font-size: 12px !important;
+            font-weight: 600 !important;
+            font-family: Arial, sans-serif !important;
+            color: #000 !important;
+            width: 96px;
+            text-align: center;
+            min-height: unset !important;
+            transition: transform 0.12s ease, box-shadow 0.12s ease, font-size 0.12s ease;
+        }
+        .agg-btn:hover { box-shadow: 0 1px 0 rgba(0,0,0,.35); }
+        .agg-btn.active {
+            transform: scale(1.25);
+            font-weight: bold !important;
+            font-size: 18px !important;
+            background: #d9efe7 !important;
+            z-index: 1;
+        }
+        </style>
+        '''
+    )
 
 
-def _build_figure(rows: list[dict[str, Any]], title: str, series: Series) -> Any:
+def _parse_row_datetime(row: dict[str, Any]) -> datetime | None:
+    fecha = str(row.get('fecha') or '').strip()
+    hora = str(row.get('hora') or '').strip() or '00:00:00'
+    if not fecha:
+        return None
+
+    fecha = fecha.replace('/', '-').replace('.', '-')
+    parts = fecha.split('-')
+    if len(parts) == 3 and len(parts[0]) != 4:
+        fecha = f'{parts[2]}-{parts[1].zfill(2)}-{parts[0].zfill(2)}'
+    elif len(parts) == 3:
+        fecha = f'{parts[0]}-{parts[1].zfill(2)}-{parts[2].zfill(2)}'
+
+    hora = hora.rstrip('Z').split('+', 1)[0]
+    if len(hora) == 5:
+        hora = f'{hora}:00'
+
+    try:
+        return datetime.fromisoformat(f'{fecha}T{hora[:8]}')
+    except ValueError:
+        return None
+
+
+def _rows_to_frame(rows: list[dict[str, Any]]) -> Any:
     import pandas as pd
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
 
-    df = pd.DataFrame(rows)
-    x_values = _x_axis(rows)
-    fig = make_subplots(specs=[[{'secondary_y': title == 'Ambientales'}]])
-
-    for key, label, unit in series:
-        if key not in df:
+    prepared: list[dict[str, Any]] = []
+    for row in rows:
+        dt = _parse_row_datetime(row)
+        if dt is None:
             continue
-        values = pd.to_numeric(df[key], errors='coerce')
-        use_secondary_y = title == 'Ambientales' and key in {'temp', 'hum'}
-        fig.add_trace(
-            go.Scatter(
+        item = dict(row)
+        item['_dt'] = pd.Timestamp(dt)
+        prepared.append(item)
+
+    frame = pd.DataFrame(prepared)
+    if frame.empty:
+        return frame
+    return frame.sort_values('_dt')
+
+
+def _fmt_label(ts: Any) -> str:
+    return ts.strftime('%Y-%m-%d %H:%M')
+
+
+def _tick_text(labels: list[str], minutes: int) -> list[str]:
+    out: list[str] = []
+    last_date = ''
+    for label in labels:
+        if not label:
+            out.append('')
+            continue
+        date_part, time_part = label.split(' ', 1)
+        display = time_part[:5]
+        if date_part != last_date:
+            display = f'{display}<br>{date_part.split("-")[2]}-{date_part.split("-")[1]}-{date_part.split("-")[0]}'
+            last_date = date_part
+        out.append(display)
+    return out
+
+
+def _series_data(frame: Any, spec: ChartSpec, minutes: int) -> tuple[list[str], list[float | None]]:
+    import pandas as pd
+
+    empty = ([''] * MAX_BARS, [None] * MAX_BARS)
+    if frame.empty or spec.key not in frame:
+        return empty
+
+    df = frame[['_dt', spec.key]].copy()
+    df[spec.key] = pd.to_numeric(df[spec.key], errors='coerce')
+    df = df.dropna(subset=[spec.key])
+    if df.empty:
+        return empty
+
+    if minutes == SAMPLE_BASE_MIN:
+        take = df.tail(MAX_BARS)
+        labels = [_fmt_label(ts) for ts in take['_dt']]
+        values = [float(v) for v in take[spec.key]]
+    else:
+        width = pd.Timedelta(minutes=minutes)
+        last_ts = df['_dt'].max()
+        df['_bin'] = df['_dt'].dt.floor(f'{minutes}min')
+        grouped = df.groupby('_bin')[spec.key].agg(['mean', 'count']).reset_index()
+        grouped = grouped[(grouped['_bin'] + width) <= last_ts]
+        required = max(1, math.ceil((minutes / SAMPLE_BASE_MIN) * spec.coverage))
+        grouped = grouped[grouped['count'] >= required]
+        take = grouped.tail(MAX_BARS)
+        labels = [_fmt_label(ts) for ts in take['_bin']]
+        values = [float(v) for v in take['mean']]
+
+    if spec.round_values:
+        values = [round(v) if v is not None else None for v in values]
+
+    if len(labels) > MAX_BARS:
+        labels = labels[-MAX_BARS:]
+        values = values[-MAX_BARS:]
+
+    while len(labels) < MAX_BARS:
+        labels.append('')
+    while len(values) < MAX_BARS:
+        values.append(None)
+
+    return labels, values
+
+
+def _build_figure(frame: Any, spec: ChartSpec, minutes: int) -> Any:
+    import plotly.graph_objects as go
+
+    labels, values = _series_data(frame, spec, minutes)
+    finite = [v for v in values if isinstance(v, (int, float)) and math.isfinite(v) and v >= 0]
+    upper = max(finite) * 2 if finite and max(finite) > 0 else 1
+    x_values = list(range(MAX_BARS))
+
+    fig = go.Figure(
+        data=[
+            go.Bar(
                 x=x_values,
                 y=values,
-                mode='lines+markers',
-                name=f'{label} ({unit})',
-                line={'width': 2, 'color': COLOR_MAP.get(key)},
-                marker={'size': 5},
-                connectgaps=False,
-            ),
-            secondary_y=use_secondary_y,
-        )
-
-    fig.update_layout(
-        title=title,
-        template='plotly_white',
-        height=620,
-        margin={'l': 60, 'r': 60, 't': 70, 'b': 95},
-        legend={'orientation': 'h', 'yanchor': 'bottom', 'y': 1.02, 'xanchor': 'center', 'x': 0.5},
-        hovermode='x unified',
-        paper_bgcolor='rgba(255,255,255,0)',
-        plot_bgcolor='rgba(255,255,255,0.92)',
+                name=spec.y_title,
+                marker={'color': spec.color},
+            )
+        ]
     )
-    fig.update_xaxes(title_text='Medición', tickangle=-35, automargin=True)
-
-    if title == 'Ambientales':
-        fig.update_yaxes(title_text='CO2 (ppm)', secondary_y=False)
-        fig.update_yaxes(title_text='Temperatura / Humedad', secondary_y=True)
-    else:
-        units = ', '.join(sorted({unit for _, _, unit in series}))
-        fig.update_yaxes(title_text=units)
-
-    return fig
-
-
-def _empty_figure(title: str) -> Any:
-    import plotly.graph_objects as go
-
-    fig = go.Figure()
     fig.update_layout(
-        title=title,
-        template='plotly_white',
-        height=620,
-        annotations=[{
-            'text': 'Aún no hay mediciones guardadas para graficar.',
-            'showarrow': False,
-            'xref': 'paper',
-            'yref': 'paper',
-            'x': 0.5,
-            'y': 0.5,
-            'font': {'size': 18},
-        }],
+        height=600,
+        margin={'t': 20, 'l': 60, 'r': 40, 'b': 110},
+        bargap=0.2,
+        paper_bgcolor='#cce5dc',
+        plot_bgcolor='#cce5dc',
+        showlegend=False,
+        font={'family': 'Arial', 'color': 'black'},
+    )
+    fig.update_xaxes(
+        type='category',
+        tickmode='array',
+        tickvals=x_values,
+        ticktext=_tick_text(labels, minutes),
+        tickangle=-45,
+        automargin=True,
+        gridcolor='black',
+        linecolor='black',
+        title={'text': '<b>Fecha y Hora de Medición</b>', 'font': {'size': 16, 'color': 'black', 'family': 'Arial'}, 'standoff': 30},
+        tickfont={'color': 'black', 'size': 14, 'family': 'Arial'},
+    )
+    fig.update_yaxes(
+        title={'text': f'<b>{spec.y_title}</b>', 'font': {'size': 16, 'color': 'black', 'family': 'Arial'}},
+        tickfont={'color': 'black', 'size': 14, 'family': 'Arial'},
+        rangemode='tozero',
+        gridcolor='black',
+        linecolor='black',
+        range=[0, upper],
+        fixedrange=False,
     )
     return fig
 
 
-async def _load_figure(title: str, series: Series, limit: int = 5000) -> tuple[Any | None, str | None]:
+async def _load_frame(limit: int = INITIAL_FETCH_LIMIT) -> tuple[Any | None, str | None]:
     try:
         await sync_latest_measurements()
         rows = await asyncio.to_thread(graph_rows_history, limit)
-        if not rows:
-            return _empty_figure(title), None
-        return _build_figure(rows, title, series), None
+        return _rows_to_frame(rows), None
     except ModuleNotFoundError as exc:
         missing = exc.name or 'plotly/pandas'
         return None, f'Falta instalar el paquete Python: {missing}'
     except Exception as exc:
-        return None, f'No se pudo generar la gráfica: {exc}'
+        return None, f'No se pudieron cargar las mediciones: {exc}'
 
 
-def _graph_page(route_title: str, page_title: str, series: Series) -> None:
+def _graph_page(page_title: str, charts: list[ChartSpec]) -> None:
     ui.page_title(page_title)
     add_styles()
+    _add_graph_styles()
+
+    states = {spec.key: SAMPLE_BASE_MIN for spec in charts}
+    plot_widgets: dict[str, Any] = {}
+    buttons: dict[str, list[Any]] = {spec.key: [] for spec in charts}
+    frame_cache: Any | None = None
 
     with ui.element('div').classes('dashboard'):
         _nav()
@@ -157,27 +324,59 @@ def _graph_page(route_title: str, page_title: str, series: Series) -> None:
             ui.label('LCT Didacticos').classes('brand-title')
             ui.image('/static/LCT.png').props('fit=contain no-spinner').classes('connect-logo')
         ui.label(page_title).classes('section-title')
-        status = ui.label('Cargando gráfica...').classes('status-line mt-3')
-        chart_container = ui.column().classes('w-full mt-4')
+        status = ui.label('Cargando gráficas...').classes('status-line mt-3')
+
+        for spec in charts:
+            with ui.column().classes('chart-card'):
+                ui.label(spec.y_title).classes('agg-chart-title')
+                ui.label('Seleccione el intervalo de lecturas').classes('agg-toolbar-label')
+                with ui.row().classes('agg-toolbar'):
+                    for label, minutes in MENU:
+                        button = ui.button(label).props('flat no-caps').classes('agg-btn')
+                        buttons[spec.key].append(button)
+
+                        async def select_interval(m: int = minutes, s: ChartSpec = spec) -> None:
+                            states[s.key] = m
+                            await redraw_one(s)
+
+                        button.on('click', select_interval)
+                plot_widgets[spec.key] = ui.plotly({}).classes('w-full')
+
         with ui.row().classes('justify-center gap-3 mt-4'):
             ui.button('Actualizar', on_click=lambda: ui.timer(0.1, refresh, once=True)).props('unelevated')
             ui.button('Descargar CSV', on_click=lambda: ui.navigate.to('/api/measurements.csv')).props('flat')
 
-    chart: Any | None = None
+    def update_active_buttons(spec: ChartSpec) -> None:
+        active_minutes = states[spec.key]
+        for button, (_, minutes) in zip(buttons[spec.key], MENU):
+            if minutes == active_minutes:
+                button.classes(add='active')
+            else:
+                button.classes(remove='active')
+
+    async def redraw_one(spec: ChartSpec) -> None:
+        if frame_cache is None:
+            return
+        try:
+            figure = _build_figure(frame_cache, spec, states[spec.key])
+            plot_widgets[spec.key].figure = figure
+            plot_widgets[spec.key].update()
+            update_active_buttons(spec)
+        except ModuleNotFoundError as exc:
+            status.set_text(f'Falta instalar el paquete Python: {exc.name or "plotly/pandas"}')
+        except Exception as exc:
+            status.set_text(f'No se pudo generar {spec.y_title}: {exc}')
 
     async def refresh() -> None:
-        nonlocal chart
-        figure, error = await _load_figure(route_title, series)
+        nonlocal frame_cache
+        frame, error = await _load_frame()
         if error:
             status.set_text(error)
             return
+        frame_cache = frame
         status.set_text('')
-        if chart is None:
-            with chart_container:
-                chart = ui.plotly(figure).classes('w-full')
-        else:
-            chart.figure = figure
-            chart.update()
+        for spec in charts:
+            await redraw_one(spec)
 
     ui.timer(8.0, refresh)
     ui.timer(0.1, refresh, once=True)
@@ -185,14 +384,14 @@ def _graph_page(route_title: str, page_title: str, series: Series) -> None:
 
 @ui.page('/graficas/particulas')
 def particles_graph() -> None:
-    _graph_page('Partículas', 'Gráficas de Partículas', PARTICLE_SERIES)
+    _graph_page('Gráficas Tiempo Real - Partículas', PARTICLE_CHARTS)
 
 
 @ui.page('/graficas/voc-nox')
 def voc_nox_graph() -> None:
-    _graph_page('VOC NOx', 'Gráficas VOC NOx', VOC_NOX_SERIES)
+    _graph_page('Gráficas Tiempo Real - VOC & NOx', VOC_NOX_CHARTS)
 
 
 @ui.page('/graficas/ambientales')
 def ambient_graph() -> None:
-    _graph_page('Ambientales', 'Gráficas Ambientales', AMBIENT_SERIES)
+    _graph_page('Gráficas Tiempo Real - CO2, Temperatura & Humedad', AMBIENT_CHARTS)
