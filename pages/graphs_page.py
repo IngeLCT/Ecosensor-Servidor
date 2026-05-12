@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from nicegui import ui
+from nicegui import app, ui
 
 from services.device_registry import active_device_options, ensure_active_devices
 from services.measurement_sync import sync_sensor_measurements
@@ -408,9 +408,7 @@ def _graph_page(page_title: str, charts: list[ChartSpec]) -> None:
             ui.label('LCT Didacticos').classes('brand-title')
             ui.image('/static/LCT.png').props('fit=contain no-spinner').classes('connect-logo')
         ui.label(page_title).classes('section-title')
-        with ui.column().classes('history-controls'):
-            ui.label('EcoSensor activo').classes('history-select-label')
-            sensor_select = ui.select({}, value=None).props('outlined dense').classes('w-full')
+        id_label = ui.label('ID: -').classes('section-title')
         status = ui.label('Cargando gráficas...').classes('status-line mt-3')
 
         for spec in charts:
@@ -454,16 +452,16 @@ def _graph_page(page_title: str, charts: list[ChartSpec]) -> None:
         nonlocal selected_device_id
         await ensure_active_devices()
         options = active_device_options()
-        sensor_select.options = options
-        if not options:
-            selected_device_id = None
-            sensor_select.value = None
-            sensor_select.update()
-            return
-        if selected_device_id not in options:
-            selected_device_id = next(iter(options))
-            sensor_select.value = selected_device_id
-        sensor_select.update()
+        stored_device_id = str(app.storage.user.get('selected_device_id') or '') or None
+        if stored_device_id in options:
+            selected_device_id = stored_device_id
+        elif selected_device_id not in options:
+            selected_device_id = next(iter(options)) if options else None
+            if selected_device_id:
+                app.storage.user['selected_device_id'] = selected_device_id
+            else:
+                app.storage.user.pop('selected_device_id', None)
+        id_label.set_text(f'ID: {selected_device_id or "-"}')
 
     async def refresh() -> None:
         nonlocal frame_cache
@@ -476,17 +474,10 @@ def _graph_page(page_title: str, charts: list[ChartSpec]) -> None:
             status.set_text(error)
             return
         frame_cache = frame
-        status.set_text(f'EcoSensor seleccionado: {selected_device_id}')
+        status.set_text('')
         for spec in charts:
             await redraw_one(spec)
 
-    async def on_sensor_change(event: Any) -> None:
-        nonlocal selected_device_id, frame_cache
-        selected_device_id = str(event.value or '') or None
-        frame_cache = None
-        await refresh()
-
-    sensor_select.on_value_change(on_sensor_change)
     ui.timer(SERVER_REFRESH_SECONDS, refresh)
     ui.timer(0.1, refresh, once=True)
 
@@ -708,9 +699,8 @@ def history_graph() -> None:
 
         ui.separator()
         ui.label('Gráfica de Datos Historico').classes('section-title')
+        id_label = ui.label('ID: -').classes('section-title')
         with ui.column().classes('history-controls'):
-            ui.label('EcoSensor activo').classes('history-select-label')
-            sensor_select = ui.select({}, value=None).props('outlined dense').classes('w-full')
             ui.label('Seleccionar Dato a Graficar:').classes('history-select-label')
             selector = ui.select(HISTORY_SELECT_OPTIONS, value='pm1p0').props('outlined dense').classes('w-full')
         with ui.column().classes('agg-toolbar-wrap'):
@@ -827,16 +817,16 @@ def history_graph() -> None:
         nonlocal selected_device_id
         await ensure_active_devices()
         options = active_device_options()
-        sensor_select.options = options
-        if not options:
-            selected_device_id = None
-            sensor_select.value = None
-            sensor_select.update()
-            return
-        if selected_device_id not in options:
-            selected_device_id = next(iter(options))
-            sensor_select.value = selected_device_id
-        sensor_select.update()
+        stored_device_id = str(app.storage.user.get('selected_device_id') or '') or None
+        if stored_device_id in options:
+            selected_device_id = stored_device_id
+        elif selected_device_id not in options:
+            selected_device_id = next(iter(options)) if options else None
+            if selected_device_id:
+                app.storage.user['selected_device_id'] = selected_device_id
+            else:
+                app.storage.user.pop('selected_device_id', None)
+        id_label.set_text(f'ID: {selected_device_id or "-"}')
 
     async def load_history() -> None:
         nonlocal frame_cache
@@ -851,11 +841,11 @@ def history_graph() -> None:
             rows = await asyncio.to_thread(graph_rows_all, selected_device_id)
             frame_cache = _rows_to_frame(rows)
             if frame_cache.empty:
-                status.set_text(f'Historial local vacío para {selected_device_id}. No hay registros almacenados para graficar.')
+                status.set_text('Historial local vacío. No hay registros almacenados para graficar.')
             else:
                 total = len(frame_cache)
                 last = frame_cache.iloc[-1]
-                status.set_text(f'Historial cargado para {selected_device_id}. Registros: {total}. Última medición: {last["fecha"]} {last["hora"]}')
+                status.set_text(f'Historial cargado. Registros: {total}. Última medición: {last["fecha"]} {last["hora"]}')
             await rebuild()
         except ModuleNotFoundError as exc:
             status.set_text(f'Falta instalar el paquete Python: {exc.name or "plotly/pandas"}')
@@ -881,14 +871,7 @@ def history_graph() -> None:
         _update_history_range_labels()
         await redraw()
 
-    async def on_sensor_change(event: Any) -> None:
-        nonlocal selected_device_id, frame_cache
-        selected_device_id = str(event.value or '') or None
-        frame_cache = None
-        await load_history()
-
     history_range.on('update:model-value', on_history_range_change)
-    sensor_select.on_value_change(on_sensor_change)
     selector.on('update:model-value', lambda: ui.timer(0.1, rebuild, once=True))
     ui.timer(0.1, load_history, once=True)
 

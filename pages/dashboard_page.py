@@ -1,6 +1,6 @@
 from typing import Any
 
-from nicegui import ui
+from nicegui import app, ui
 
 from services.device_registry import active_device_options, ensure_active_devices
 from services.measurement_sync import sync_sensor_measurements
@@ -34,9 +34,9 @@ def dashboard() -> None:
             ui.image('/static/LCT.png').props('fit=contain no-spinner').classes('connect-logo')
 
         ui.label('Mediciones Ambientales').classes('section-title')
-        with ui.column().classes('history-controls'):
-            ui.label('EcoSensor activo').classes('history-select-label')
-            sensor_select = ui.select({}, value=None).props('outlined dense').classes('w-full')
+        with ui.row().classes('items-center justify-center gap-3 history-controls'):
+            ui.label('ID:').classes('section-title')
+            sensor_select = ui.select({}, value=None).props('outlined dense').classes('w-64')
 
         pollutants_info_card()
 
@@ -110,15 +110,20 @@ def dashboard() -> None:
         nonlocal selected_device_id
         await ensure_active_devices()
         options = active_device_options()
+        stored_device_id = str(app.storage.user.get('selected_device_id') or '') or None
+        if stored_device_id:
+            selected_device_id = stored_device_id
         sensor_select.options = options
         if not options:
             selected_device_id = None
+            app.storage.user.pop('selected_device_id', None)
             sensor_select.value = None
             sensor_select.update()
             return
         if selected_device_id not in options:
             selected_device_id = next(iter(options))
-            sensor_select.value = selected_device_id
+            app.storage.user['selected_device_id'] = selected_device_id
+        sensor_select.value = selected_device_id
         sensor_select.update()
 
     async def refresh() -> None:
@@ -137,13 +142,17 @@ def dashboard() -> None:
         date_info.set_content(f'<strong>Fecha última medición:</strong> {date_part}' if date_part else '')
         time_info.set_content(f'<strong>Hora última medición:</strong> {time_part}' if time_part else '')
         if row:
-            connection_info.set_text(f'EcoSensor seleccionado: {selected_device_id}')
+            connection_info.set_text('')
         else:
-            connection_info.set_text(f'{selected_device_id} activo, sin mediciones almacenadas todavía.')
+            connection_info.set_text('EcoSensor activo, sin mediciones almacenadas todavía.')
 
     async def on_sensor_change(event: Any) -> None:
         nonlocal selected_device_id
         selected_device_id = str(event.value or '') or None
+        if selected_device_id:
+            app.storage.user['selected_device_id'] = selected_device_id
+        else:
+            app.storage.user.pop('selected_device_id', None)
         await refresh()
 
     sensor_select.on_value_change(on_sensor_change)

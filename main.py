@@ -63,4 +63,4 @@ def graph_read(
 
 start_mdns_service()
 
-ui.run(host=UI_HOST, port=UI_PORT, title='EcoSensor Servidor', reload=False)
+ui.run(host=UI_HOST, port=UI_PORT, title='EcoSensor Servidor', reload=False, storage_secret='ecosensor-servidor-local')
