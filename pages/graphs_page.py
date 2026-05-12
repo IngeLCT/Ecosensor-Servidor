@@ -98,6 +98,17 @@ def _add_graph_styles() -> None:
             padding: 20px;
             box-sizing: border-box;
         }
+        .history-chart-card {
+            height: 660px;
+            max-height: 660px;
+            overflow: hidden;
+        }
+        .history-chart-card .js-plotly-plot,
+        .history-chart-card .plot-container,
+        .history-chart-card .svg-container {
+            height: 620px !important;
+            max-height: 620px !important;
+        }
         .agg-toolbar-wrap {
             display: flex;
             flex-direction: column;
@@ -787,6 +798,7 @@ def history_graph() -> None:
     current_minutes = SAMPLE_BASE_MIN
     range_start = 0
     range_end = 0
+    suppress_range_event = False
 
     with ui.element('div').classes('dashboard'):
         _nav()
@@ -823,7 +835,8 @@ def history_graph() -> None:
             range_label = ui.label('Sin registros para seleccionar').classes('status-line')
             range_slider = ui.range(min=0, max=0, value={'min': 0, 'max': 0}).props('label-always snap').classes('w-full')
 
-        chart = ui.plotly({}).classes('w-full chart-card')
+        with ui.element('div').classes('chart-card history-chart-card'):
+            chart = ui.plotly({}).classes('w-full').style('height: 620px; max-height: 620px;')
         table = ui.html('').classes('w-full')
         with ui.row().classes('justify-center gap-3 mt-4'):
             ui.button('Actualizar historial', on_click=lambda: ui.timer(0.1, lambda: load_history(sync_esp=True), once=True)).props('unelevated')
@@ -862,7 +875,7 @@ def history_graph() -> None:
         table.set_content(_history_table_html(labels, values, spec, current_minutes))
 
     async def rebuild() -> None:
-        nonlocal current_labels, current_values, current_times, range_start, range_end
+        nonlocal current_labels, current_values, current_times, range_start, range_end, suppress_range_event
         if frame_cache is None:
             return
         spec = HISTORY_OPTIONS[str(selector.value)]
@@ -871,7 +884,11 @@ def history_graph() -> None:
         range_start = 0
         range_end = max_idx
         range_slider.props(f'min=0 max={max_idx} step=1 label-always snap')
-        range_slider.set_value({'min': range_start, 'max': range_end})
+        suppress_range_event = True
+        try:
+            range_slider.set_value({'min': range_start, 'max': range_end})
+        finally:
+            suppress_range_event = False
         if current_labels:
             range_label.set_text(f'{current_labels[range_start]}  →  {current_labels[range_end]}')
         else:
@@ -919,6 +936,8 @@ def history_graph() -> None:
 
     async def on_history_range_change(e) -> None:
         nonlocal range_start, range_end
+        if suppress_range_event:
+            return
         value = getattr(e, 'value', None)
         if isinstance(value, dict):
             range_start = int(value.get('min', range_start))
