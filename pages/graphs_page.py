@@ -1,6 +1,4 @@
 import asyncio
-import html
-import json
 import math
 from dataclasses import dataclass
 from datetime import datetime
@@ -183,69 +181,6 @@ def _add_graph_styles() -> None:
             max-width: 900px;
             margin: 2em auto;
             padding: 2em 1em;
-        }
-        .double_range_slider {
-            position: relative;
-            width: 100%;
-            height: 10px;
-            background-color: #dddddd;
-            border-radius: 10px;
-            margin-top: 34px;
-        }
-        .range_track {
-            position: absolute;
-            height: 100%;
-            background-color: #95d564;
-            border-radius: 10px;
-            z-index: 1;
-        }
-        .double_range_slider input[type="range"] {
-            position: absolute;
-            width: 100%;
-            height: 10px;
-            background: none;
-            pointer-events: none;
-            -webkit-appearance: none;
-            appearance: none;
-            top: 0;
-            left: 0;
-            margin: 0;
-            z-index: 2;
-        }
-        .double_range_slider input.min { z-index: 3; }
-        .double_range_slider input::-webkit-slider-thumb {
-            height: 20px;
-            width: 20px;
-            border-radius: 50%;
-            background: #95d564;
-            border: 2px solid #2a2a2a;
-            pointer-events: auto;
-            -webkit-appearance: none;
-            cursor: pointer;
-        }
-        .double_range_slider input::-moz-range-thumb {
-            height: 20px;
-            width: 20px;
-            border-radius: 50%;
-            background: #95d564;
-            border: 2px solid #2a2a2a;
-            pointer-events: auto;
-            cursor: pointer;
-        }
-        .minvalue, .maxvalue {
-            position: absolute;
-            top: 24px;
-            transform: translateX(-50%);
-            color: #000;
-            font-size: 14px;
-            font-weight: bold;
-            white-space: nowrap;
-        }
-        .history-range-label {
-            color: #000;
-            font-size: 16px;
-            font-weight: bold;
-            min-height: 22px;
         }
         .data-table-container {
             width: 100%;
@@ -672,96 +607,6 @@ def _build_history_figure(labels: list[str], values: list[float], times: list[An
     return fig
 
 
-def _history_slider_script() -> str:
-    return """
-    <script>
-    (() => {
-      if (window.__ecosensorHistorySliderReady) return;
-      window.__ecosensorHistorySliderReady = true;
-
-      function labelsFor(root) {
-        try { return JSON.parse(root.dataset.labels || '[]'); }
-        catch (e) { return []; }
-      }
-
-      function update(root, emit = false) {
-        if (!root) return;
-        const labels = labelsFor(root);
-        const minInput = root.querySelector('input.min');
-        const maxInput = root.querySelector('input.max');
-        const track = root.querySelector('.range_track');
-        const minBubble = root.querySelector('.minvalue');
-        const maxBubble = root.querySelector('.maxvalue');
-        if (!minInput || !maxInput || !track || !minBubble || !maxBubble) return;
-
-        const max = Number(maxInput.max || 0);
-        const minGap = Math.min(6, max);
-        let minVal = Number(minInput.value || 0);
-        let maxVal = Number(maxInput.value || 0);
-
-        if (maxVal - minVal < minGap) {
-          if (document.activeElement === minInput) minVal = Math.max(0, maxVal - minGap);
-          else maxVal = Math.min(max, minVal + minGap);
-          minInput.value = minVal;
-          maxInput.value = maxVal;
-        }
-
-        const denom = max || 1;
-        const left = (minVal / denom) * 100;
-        const right = 100 - (maxVal / denom) * 100;
-        track.style.left = left + '%';
-        track.style.right = right + '%';
-        minBubble.style.left = left + '%';
-        maxBubble.style.left = (maxVal / denom) * 100 + '%';
-        minBubble.textContent = labels[Number(minVal)] || String(minVal);
-        maxBubble.textContent = labels[Number(maxVal)] || String(maxVal);
-
-        if (emit) {
-          root.dispatchEvent(new CustomEvent('history-range-change', {
-            bubbles: true,
-            detail: { start: minVal, end: maxVal }
-          }));
-        }
-      }
-
-      document.addEventListener('input', (event) => {
-        const input = event.target;
-        if (!(input instanceof HTMLInputElement)) return;
-        const root = input.closest('.double_range_slider[data-history-slider=\"1\"]');
-        if (root) update(root, true);
-      });
-
-      const observer = new MutationObserver(() => {
-        document.querySelectorAll('.double_range_slider[data-history-slider=\"1\"]').forEach((root) => update(root, false));
-      });
-      observer.observe(document.body, { childList: true, subtree: true });
-      document.querySelectorAll('.double_range_slider[data-history-slider=\"1\"]').forEach((root) => update(root, false));
-    })();
-    </script>
-    """
-
-
-def _history_slider_html(labels: list[str], start: int = 0, end: int | None = None) -> str:
-    max_idx = max(0, len(labels) - 1)
-    if end is None:
-        end = max_idx
-    start = max(0, min(start, max_idx))
-    end = max(0, min(end, max_idx))
-    if start > end:
-        start, end = end, start
-    labels_json = html.escape(json.dumps(labels, ensure_ascii=False), quote=True)
-    return f'''
-    <div class="double_range_slider_box">
-      <div class="double_range_slider" id="historyRangeRoot" data-history-slider="1" data-labels="{labels_json}">
-        <span class="range_track" id="historyRangeTrack"></span>
-        <input type="range" class="max" min="0" max="{max_idx}" value="{end}" step="1" />
-        <input type="range" class="min" min="0" max="{max_idx}" value="{start}" step="1" />
-        <div class="minvalue">0</div>
-        <div class="maxvalue">{max_idx}</div>
-      </div>
-    </div>
-    '''
-
 
 def _history_table_html(labels: list[str], values: list[float], spec: ChartSpec, minutes: int) -> str:
     unit_label = _interval_label(minutes)
@@ -798,7 +643,7 @@ def history_graph() -> None:
     current_minutes = SAMPLE_BASE_MIN
     range_start = 0
     range_end = 0
-    range_redraw_pending = False
+    range_change_token = 0
 
     with ui.element('div').classes('dashboard'):
         _nav()
@@ -837,9 +682,6 @@ def history_graph() -> None:
         with ui.element('div').classes('chart-card history-chart-card'):
             chart = ui.plotly({}).classes('w-full').style('height: 620px; max-height: 620px;')
         table = ui.html('').classes('w-full')
-        with ui.row().classes('justify-center gap-3 mt-4'):
-            ui.button('Actualizar historial', on_click=lambda: ui.timer(0.1, lambda: load_history(sync_esp=True), once=True)).props('unelevated')
-            ui.button('Descargar CSV', on_click=lambda: ui.navigate.to('/api/measurements.csv')).props('flat')
 
     def update_interval_buttons() -> None:
         for button, (_, minutes) in zip(interval_buttons, HISTORY_MENU):
@@ -858,7 +700,7 @@ def history_graph() -> None:
             start, end = end, start
         return start, end
 
-    def update_range_value_labels() -> None:
+    def update_range_value_labels(*, refresh: bool = True) -> None:
         if not current_labels:
             left = right = 'Sin datos'
         else:
@@ -867,7 +709,8 @@ def history_graph() -> None:
             right = current_labels[end]
         range_slider._props['left-label-value'] = left
         range_slider._props['right-label-value'] = right
-        range_slider.update()
+        if refresh:
+            range_slider.update()
 
     async def redraw() -> None:
         if not current_labels:
@@ -899,38 +742,18 @@ def history_graph() -> None:
         update_interval_buttons()
         await redraw()
 
-    async def load_history(sync_esp: bool = False) -> None:
+    async def load_history() -> None:
         nonlocal frame_cache
         try:
-            status.set_text('Cargando historial local...')
+            status.set_text('Cargando historial almacenado...')
             rows = await asyncio.to_thread(graph_rows_all)
             frame_cache = _rows_to_frame(rows)
             if frame_cache.empty:
-                status.set_text('Historial local vacío. Usa Actualizar historial para intentar sincronizar con el ESP32.')
+                status.set_text('Historial local vacío. No hay registros almacenados para graficar.')
             else:
                 total = len(frame_cache)
                 last = frame_cache.iloc[-1]
                 status.set_text(f'Historial cargado. Registros: {total}. Última medición: {last["fecha"]} {last["hora"]}')
-            await rebuild()
-
-            if not sync_esp:
-                return
-
-            status.set_text('Sincronizando ESP32...')
-            try:
-                await asyncio.wait_for(sync_latest_measurements(), timeout=15)
-            except TimeoutError:
-                status.set_text('Historial local cargado. Sincronización ESP32 agotó tiempo de espera.')
-                return
-
-            rows = await asyncio.to_thread(graph_rows_all)
-            frame_cache = _rows_to_frame(rows)
-            if frame_cache.empty:
-                status.set_text('No hay registros utilizables después de sincronizar.')
-            else:
-                total = len(frame_cache)
-                last = frame_cache.iloc[-1]
-                status.set_text(f'Historial sincronizado. Registros: {total}. Última medición: {last["fecha"]} {last["hora"]}')
             await rebuild()
         except ModuleNotFoundError as exc:
             status.set_text(f'Falta instalar el paquete Python: {exc.name or "plotly/pandas"}')
@@ -938,7 +761,7 @@ def history_graph() -> None:
             status.set_text(f'Error al cargar historial: {exc}')
 
     async def on_history_range_change(e) -> None:
-        nonlocal range_start, range_end, range_redraw_pending
+        nonlocal range_start, range_end, range_change_token
         value = getattr(e, 'value', None)
         if isinstance(value, dict):
             max_idx = max(0, len(current_labels) - 1)
@@ -946,12 +769,13 @@ def history_graph() -> None:
             range_end = max(0, min(int(value.get('max', max_idx)), max_idx))
             if range_start > range_end:
                 range_start, range_end = range_end, range_start
-            update_range_value_labels()
-        if range_redraw_pending:
+            update_range_value_labels(refresh=False)
+        range_change_token += 1
+        my_token = range_change_token
+        await asyncio.sleep(0.60)
+        if my_token != range_change_token:
             return
-        range_redraw_pending = True
-        await asyncio.sleep(0.35)
-        range_redraw_pending = False
+        update_range_value_labels(refresh=True)
         await redraw()
 
     selector.on('update:model-value', lambda: ui.timer(0.1, rebuild, once=True))
