@@ -1,4 +1,5 @@
 import asyncio
+import html
 import json
 import math
 from dataclasses import dataclass
@@ -664,6 +665,73 @@ def _build_history_figure(labels: list[str], values: list[float], times: list[An
     return fig
 
 
+def _history_slider_script() -> str:
+    return """
+    <script>
+    (() => {
+      if (window.__ecosensorHistorySliderReady) return;
+      window.__ecosensorHistorySliderReady = true;
+
+      function labelsFor(root) {
+        try { return JSON.parse(root.dataset.labels || '[]'); }
+        catch (e) { return []; }
+      }
+
+      function update(root) {
+        if (!root) return;
+        const labels = labelsFor(root);
+        const minInput = root.querySelector('input.min');
+        const maxInput = root.querySelector('input.max');
+        const track = root.querySelector('.range_track');
+        const minBubble = root.querySelector('.minvalue');
+        const maxBubble = root.querySelector('.maxvalue');
+        if (!minInput || !maxInput || !track || !minBubble || !maxBubble) return;
+
+        const max = Number(maxInput.max || 0);
+        const minGap = Math.min(6, max);
+        let minVal = Number(minInput.value || 0);
+        let maxVal = Number(maxInput.value || 0);
+
+        if (maxVal - minVal < minGap) {
+          if (document.activeElement === minInput) minVal = Math.max(0, maxVal - minGap);
+          else maxVal = Math.min(max, minVal + minGap);
+          minInput.value = minVal;
+          maxInput.value = maxVal;
+        }
+
+        const denom = max || 1;
+        const left = (minVal / denom) * 100;
+        const right = 100 - (maxVal / denom) * 100;
+        track.style.left = left + '%';
+        track.style.right = right + '%';
+        minBubble.style.left = left + '%';
+        maxBubble.style.left = (maxVal / denom) * 100 + '%';
+        minBubble.textContent = labels[Number(minVal)] || String(minVal);
+        maxBubble.textContent = labels[Number(maxVal)] || String(maxVal);
+
+        root.dispatchEvent(new CustomEvent('history-range-change', {
+          bubbles: true,
+          detail: { start: minVal, end: maxVal }
+        }));
+      }
+
+      document.addEventListener('input', (event) => {
+        const input = event.target;
+        if (!(input instanceof HTMLInputElement)) return;
+        const root = input.closest('.double_range_slider[data-history-slider=\"1\"]');
+        if (root) update(root);
+      });
+
+      const observer = new MutationObserver(() => {
+        document.querySelectorAll('.double_range_slider[data-history-slider=\"1\"]').forEach(update);
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+      document.querySelectorAll('.double_range_slider[data-history-slider=\"1\"]').forEach(update);
+    })();
+    </script>
+    """
+
+
 def _history_slider_html(labels: list[str], start: int = 0, end: int | None = None) -> str:
     max_idx = max(0, len(labels) - 1)
     if end is None:
@@ -672,10 +740,10 @@ def _history_slider_html(labels: list[str], start: int = 0, end: int | None = No
     end = max(0, min(end, max_idx))
     if start > end:
         start, end = end, start
-    labels_json = json.dumps(labels, ensure_ascii=False)
+    labels_json = html.escape(json.dumps(labels, ensure_ascii=False), quote=True)
     return f'''
     <div class="double_range_slider_box">
-      <div class="double_range_slider" id="historyRangeRoot">
+      <div class="double_range_slider" id="historyRangeRoot" data-history-slider="1" data-labels="{labels_json}">
         <span class="range_track" id="historyRangeTrack"></span>
         <input type="range" class="max" min="0" max="{max_idx}" value="{end}" step="1" />
         <input type="range" class="min" min="0" max="{max_idx}" value="{start}" step="1" />
@@ -683,47 +751,6 @@ def _history_slider_html(labels: list[str], start: int = 0, end: int | None = No
         <div class="maxvalue">{max_idx}</div>
       </div>
     </div>
-    <script>
-    (() => {{
-      const root = document.getElementById('historyRangeRoot');
-      if (!root) return;
-      const labels = {labels_json};
-      const minInput = root.querySelector('input.min');
-      const maxInput = root.querySelector('input.max');
-      const track = root.querySelector('#historyRangeTrack');
-      const minBubble = root.querySelector('.minvalue');
-      const maxBubble = root.querySelector('.maxvalue');
-      const max = Number(maxInput.max || 0);
-      const minGap = Math.min(6, max);
-      function labelAt(index) {{ return labels[Number(index)] || String(index); }}
-      function update() {{
-        let minVal = Number(minInput.value || 0);
-        let maxVal = Number(maxInput.value || 0);
-        if (maxVal - minVal < minGap) {{
-          if (document.activeElement === minInput) minVal = Math.max(0, maxVal - minGap);
-          else maxVal = Math.min(max, minVal + minGap);
-          minInput.value = minVal;
-          maxInput.value = maxVal;
-        }}
-        const denom = max || 1;
-        const left = (minVal / denom) * 100;
-        const right = 100 - (maxVal / denom) * 100;
-        track.style.left = left + '%';
-        track.style.right = right + '%';
-        minBubble.style.left = left + '%';
-        maxBubble.style.left = (maxVal / denom) * 100 + '%';
-        minBubble.textContent = labelAt(minVal);
-        maxBubble.textContent = labelAt(maxVal);
-        root.dispatchEvent(new CustomEvent('history-range-change', {{
-          bubbles: true,
-          detail: {{ start: minVal, end: maxVal }}
-        }}));
-      }}
-      minInput.addEventListener('input', update);
-      maxInput.addEventListener('input', update);
-      update();
-    }})();
-    </script>
     '''
 
 
@@ -754,6 +781,7 @@ def history_graph() -> None:
     ui.page_title('Gráficas del Historial')
     add_styles()
     _add_graph_styles()
+    ui.add_body_html(_history_slider_script())
 
     frame_cache: Any | None = None
     current_labels: list[str] = []
