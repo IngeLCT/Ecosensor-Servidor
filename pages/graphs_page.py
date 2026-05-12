@@ -184,13 +184,19 @@ def _add_graph_styles() -> None:
         }
         .data-table-container {
             width: 100%;
-            overflow-x: auto;
+            max-height: 760px;
+            overflow: auto;
             margin-top: 24px;
         }
         .data-table-container table {
             width: 100%;
             border-collapse: separate;
             border-spacing: 0;
+        }
+        .data-table-container thead th {
+            position: sticky;
+            top: 0;
+            z-index: 2;
         }
         .data-table-container th,
         .data-table-container td {
@@ -523,50 +529,57 @@ def _history_series_data(frame: Any, spec: ChartSpec, minutes: int) -> tuple[lis
     return labels, values, times
 
 
-def _history_ticks(times: list[Any], minutes: int) -> tuple[list[Any], list[str]]:
-    if not times:
+def _history_category_ticks(labels: list[str], minutes: int) -> tuple[list[int], list[str]]:
+    non_empty = [i for i, label in enumerate(labels) if label]
+    if not non_empty:
         return [], []
-    max_ticks = 10 if minutes == 1440 else 14
-    if len(times) <= max_ticks:
-        selected = list(range(len(times)))
-    else:
-        step = math.ceil(len(times) / max_ticks)
-        selected = list(range(0, len(times), step))
-        if selected[-1] != len(times) - 1:
-            selected.append(len(times) - 1)
 
-    tickvals = [times[i] for i in selected]
+    max_ticks = 12 if minutes == 1440 else 24
+    if len(non_empty) <= max_ticks:
+        selected = non_empty
+    else:
+        step = math.ceil(len(non_empty) / max_ticks)
+        selected = non_empty[::step]
+        if selected[-1] != non_empty[-1]:
+            selected.append(non_empty[-1])
+
     ticktext: list[str] = []
     previous_date = ''
     for i in selected:
-        ts = times[i]
-        if minutes == 1440:
-            ticktext.append(ts.strftime('%d-%m-%Y'))
+        label = labels[i]
+        if ' ' not in label:
+            ticktext.append(label)
             continue
-        base = ts.strftime('%H:%M')
-        date = ts.strftime('%d-%m-%Y')
-        if date != previous_date:
-            ticktext.append(f'{base}<br>{date}')
-            previous_date = date
+        date_part, time_part = label.split(' ', 1)
+        if minutes == 1440:
+            ticktext.append(date_part)
+            continue
+        base = time_part[:5]
+        if date_part != previous_date:
+            ticktext.append(f'{base}<br>{date_part}')
+            previous_date = date_part
         else:
             ticktext.append(base)
-    return tickvals, ticktext
-
-
-def _history_time_to_json(ts: Any) -> str:
-    return ts.isoformat() if hasattr(ts, 'isoformat') else str(ts)
+    return selected, ticktext
 
 
 def _build_history_figure(labels: list[str], values: list[float], times: list[Any], spec: ChartSpec, minutes: int) -> Any:
     import plotly.graph_objects as go
 
-    finite = [v for v in values if isinstance(v, (int, float)) and math.isfinite(v) and v >= 0]
-    upper = max(finite) * 2 if finite and max(finite) > 0 else 1
-    tickvals, ticktext = _history_ticks(times, minutes)
-    json_times = [_history_time_to_json(ts) for ts in times]
-    json_tickvals = [_history_time_to_json(ts) for ts in tickvals]
+    display_labels = list(labels)
+    display_values: list[float | None] = list(values)
+    # Si hay pocos datos, mantener 24 posiciones para evitar barras enormes.
+    if len(display_labels) < MAX_BARS:
+        missing = MAX_BARS - len(display_labels)
+        display_labels.extend([''] * missing)
+        display_values.extend([None] * missing)
 
-    fig = go.Figure(data=[go.Bar(x=json_times, y=values, name=spec.title, marker={'color': spec.color})])
+    finite = [v for v in display_values if isinstance(v, (int, float)) and math.isfinite(v) and v >= 0]
+    upper = max(finite) * 2 if finite and max(finite) > 0 else 1
+    x_values = list(range(len(display_labels)))
+    tickvals, ticktext = _history_category_ticks(display_labels, minutes)
+
+    fig = go.Figure(data=[go.Bar(x=x_values, y=display_values, name=spec.title, marker={'color': spec.color})])
     fig.update_layout(
         height=600,
         margin={'t': 20, 'l': 60, 'r': 40, 'b': 95 if minutes == 1440 else 130},
@@ -577,9 +590,9 @@ def _build_history_figure(labels: list[str], values: list[float], times: list[An
         font={'family': 'Arial', 'color': 'black'},
     )
     fig.update_xaxes(
-        type='date',
+        type='category',
         tickmode='array',
-        tickvals=json_tickvals,
+        tickvals=tickvals,
         ticktext=ticktext,
         tickangle=-30 if minutes == 1440 else -45,
         automargin=True,
@@ -605,7 +618,6 @@ def _build_history_figure(labels: list[str], values: list[float], times: list[An
         showline=True,
     )
     return fig
-
 
 
 def _history_table_html(labels: list[str], values: list[float], spec: ChartSpec, minutes: int) -> str:
@@ -641,9 +653,6 @@ def history_graph() -> None:
     current_values: list[float] = []
     current_times: list[Any] = []
     current_minutes = SAMPLE_BASE_MIN
-    range_start = 0
-    range_end = 0
-    range_change_token = 0
 
     with ui.element('div').classes('dashboard'):
         _nav()
@@ -658,11 +667,6 @@ def history_graph() -> None:
         with ui.column().classes('history-controls'):
             ui.label('Seleccionar Dato a Graficar:').classes('history-select-label')
             selector = ui.select(HISTORY_SELECT_OPTIONS, value='pm1p0').props('outlined dense').classes('w-full')
-
-        with ui.column().classes('history-slider-box'):
-            ui.label('Seleccione el rango del historial').classes('history-select-label')
-            range_slider = ui.range(min=0, max=0, value={'min': 0, 'max': 0}).props('label-always').classes('w-full')
-
         with ui.column().classes('agg-toolbar-wrap'):
             ui.label('Historial').classes('agg-chart-title')
             ui.label('Seleccione el intervalo de lecturas').classes('agg-toolbar-label')
@@ -690,55 +694,23 @@ def history_graph() -> None:
             else:
                 button.classes(remove='active')
 
-    def slider_bounds() -> tuple[int, int]:
-        if not current_labels:
-            return 0, 0
-        max_idx = len(current_labels) - 1
-        start = max(0, min(range_start, max_idx))
-        end = max(0, min(range_end, max_idx))
-        if start > end:
-            start, end = end, start
-        return start, end
-
-    def update_range_value_labels(*, refresh: bool = True) -> None:
-        if not current_labels:
-            left = right = 'Sin datos'
-        else:
-            start, end = slider_bounds()
-            left = current_labels[start]
-            right = current_labels[end]
-        range_slider._props['left-label-value'] = left
-        range_slider._props['right-label-value'] = right
-        if refresh:
-            range_slider.update()
-
     async def redraw() -> None:
         if not current_labels:
             chart.figure = _build_history_figure([], [], [], HISTORY_OPTIONS[str(selector.value)], current_minutes)
             chart.update()
             table.set_content('')
             return
-        start, end = slider_bounds()
         spec = HISTORY_OPTIONS[str(selector.value)]
-        labels = current_labels[start:end + 1]
-        values = current_values[start:end + 1]
-        times = current_times[start:end + 1]
-        chart.figure = _build_history_figure(labels, values, times, spec, current_minutes)
+        chart.figure = _build_history_figure(current_labels, current_values, current_times, spec, current_minutes)
         chart.update()
-        table.set_content(_history_table_html(labels, values, spec, current_minutes))
+        table.set_content(_history_table_html(current_labels, current_values, spec, current_minutes))
 
     async def rebuild() -> None:
-        nonlocal current_labels, current_values, current_times, range_start, range_end
+        nonlocal current_labels, current_values, current_times
         if frame_cache is None:
             return
         spec = HISTORY_OPTIONS[str(selector.value)]
         current_labels, current_values, current_times = _history_series_data(frame_cache, spec, current_minutes)
-        max_idx = max(0, len(current_labels) - 1)
-        range_start = 0
-        range_end = max_idx
-        range_slider.props(f'min=0 max={max_idx} step=1 label-always')
-        range_slider.set_value({'min': range_start, 'max': range_end})
-        update_range_value_labels()
         update_interval_buttons()
         await redraw()
 
@@ -760,24 +732,5 @@ def history_graph() -> None:
         except Exception as exc:
             status.set_text(f'Error al cargar historial: {exc}')
 
-    async def on_history_range_change(e) -> None:
-        nonlocal range_start, range_end, range_change_token
-        value = getattr(e, 'value', None)
-        if isinstance(value, dict):
-            max_idx = max(0, len(current_labels) - 1)
-            range_start = max(0, min(int(value.get('min', 0)), max_idx))
-            range_end = max(0, min(int(value.get('max', max_idx)), max_idx))
-            if range_start > range_end:
-                range_start, range_end = range_end, range_start
-            update_range_value_labels(refresh=False)
-        range_change_token += 1
-        my_token = range_change_token
-        await asyncio.sleep(0.60)
-        if my_token != range_change_token:
-            return
-        update_range_value_labels(refresh=True)
-        await redraw()
-
     selector.on('update:model-value', lambda: ui.timer(0.1, rebuild, once=True))
-    range_slider.on_value_change(on_history_range_change)
     ui.timer(0.1, load_history, once=True)
