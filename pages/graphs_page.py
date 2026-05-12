@@ -798,6 +798,7 @@ def history_graph() -> None:
     current_minutes = SAMPLE_BASE_MIN
     range_start = 0
     range_end = 0
+    range_redraw_pending = False
 
     with ui.element('div').classes('dashboard'):
         _nav()
@@ -812,6 +813,10 @@ def history_graph() -> None:
         with ui.column().classes('history-controls'):
             ui.label('Seleccionar Dato a Graficar:').classes('history-select-label')
             selector = ui.select(HISTORY_SELECT_OPTIONS, value='pm1p0').props('outlined dense').classes('w-full')
+
+        with ui.column().classes('history-slider-box'):
+            ui.label('Seleccione el rango del historial').classes('history-select-label')
+            range_slider = ui.range(min=0, max=0, value={'min': 0, 'max': 0}).props('label-always').classes('w-full')
 
         with ui.column().classes('agg-toolbar-wrap'):
             ui.label('Historial').classes('agg-chart-title')
@@ -828,48 +833,6 @@ def history_graph() -> None:
                         await rebuild()
 
                     button.on('click', select_interval)
-
-        with ui.column().classes('history-slider-box'):
-            ui.label('Seleccione el rango del historial').classes('history-select-label')
-            range_label = ui.label('Sin registros para seleccionar').classes('status-line')
-            range_slider = ui.range(min=0, max=0, value={'min': 0, 'max': 0}).props('label-always snap').classes('w-full')
-
-            async def apply_range_from_slider() -> None:
-                nonlocal range_start, range_end
-                value = range_slider.value if isinstance(range_slider.value, dict) else {}
-                max_idx = max(0, len(current_labels) - 1)
-                range_start = max(0, min(int(value.get('min', 0)), max_idx))
-                range_end = max(0, min(int(value.get('max', max_idx)), max_idx))
-                if range_start > range_end:
-                    range_start, range_end = range_end, range_start
-                range_slider.set_value({'min': range_start, 'max': range_end})
-                if current_labels:
-                    range_label.set_text(f'{current_labels[range_start]}  →  {current_labels[range_end]}')
-                await redraw()
-
-            async def show_all_range() -> None:
-                nonlocal range_start, range_end
-                range_start = 0
-                range_end = max(0, len(current_labels) - 1)
-                range_slider.set_value({'min': range_start, 'max': range_end})
-                if current_labels:
-                    range_label.set_text(f'{current_labels[range_start]}  →  {current_labels[range_end]}')
-                await redraw()
-
-            async def show_last_24_range() -> None:
-                nonlocal range_start, range_end
-                max_idx = max(0, len(current_labels) - 1)
-                range_end = max_idx
-                range_start = max(0, max_idx - 23)
-                range_slider.set_value({'min': range_start, 'max': range_end})
-                if current_labels:
-                    range_label.set_text(f'{current_labels[range_start]}  →  {current_labels[range_end]}')
-                await redraw()
-
-            with ui.row().classes('justify-center gap-3 w-full'):
-                ui.button('Aplicar rango', on_click=apply_range_from_slider).props('unelevated no-caps')
-                ui.button('Todo', on_click=show_all_range).props('flat no-caps')
-                ui.button('Últimas 24', on_click=show_last_24_range).props('flat no-caps')
 
         with ui.element('div').classes('chart-card history-chart-card'):
             chart = ui.plotly({}).classes('w-full').style('height: 620px; max-height: 620px;')
@@ -895,6 +858,17 @@ def history_graph() -> None:
             start, end = end, start
         return start, end
 
+    def update_range_value_labels() -> None:
+        if not current_labels:
+            left = right = 'Sin datos'
+        else:
+            start, end = slider_bounds()
+            left = current_labels[start]
+            right = current_labels[end]
+        range_slider._props['left-label-value'] = left
+        range_slider._props['right-label-value'] = right
+        range_slider.update()
+
     async def redraw() -> None:
         if not current_labels:
             chart.figure = _build_history_figure([], [], [], HISTORY_OPTIONS[str(selector.value)], current_minutes)
@@ -919,12 +893,9 @@ def history_graph() -> None:
         max_idx = max(0, len(current_labels) - 1)
         range_start = 0
         range_end = max_idx
-        range_slider.props(f'min=0 max={max_idx} step=1 label-always snap')
+        range_slider.props(f'min=0 max={max_idx} step=1 label-always')
         range_slider.set_value({'min': range_start, 'max': range_end})
-        if current_labels:
-            range_label.set_text(f'{current_labels[range_start]}  →  {current_labels[range_end]}')
-        else:
-            range_label.set_text('Sin registros para seleccionar')
+        update_range_value_labels()
         update_interval_buttons()
         await redraw()
 
@@ -966,5 +937,23 @@ def history_graph() -> None:
         except Exception as exc:
             status.set_text(f'Error al cargar historial: {exc}')
 
+    async def on_history_range_change(e) -> None:
+        nonlocal range_start, range_end, range_redraw_pending
+        value = getattr(e, 'value', None)
+        if isinstance(value, dict):
+            max_idx = max(0, len(current_labels) - 1)
+            range_start = max(0, min(int(value.get('min', 0)), max_idx))
+            range_end = max(0, min(int(value.get('max', max_idx)), max_idx))
+            if range_start > range_end:
+                range_start, range_end = range_end, range_start
+            update_range_value_labels()
+        if range_redraw_pending:
+            return
+        range_redraw_pending = True
+        await asyncio.sleep(0.35)
+        range_redraw_pending = False
+        await redraw()
+
     selector.on('update:model-value', lambda: ui.timer(0.1, rebuild, once=True))
+    range_slider.on_value_change(on_history_range_change)
     ui.timer(0.1, load_history, once=True)
