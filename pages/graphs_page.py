@@ -673,7 +673,7 @@ def _history_slider_script() -> str:
         catch (e) { return []; }
       }
 
-      function update(root) {
+      function update(root, emit = false) {
         if (!root) return;
         const labels = labelsFor(root);
         const minInput = root.querySelector('input.min');
@@ -705,24 +705,26 @@ def _history_slider_script() -> str:
         minBubble.textContent = labels[Number(minVal)] || String(minVal);
         maxBubble.textContent = labels[Number(maxVal)] || String(maxVal);
 
-        root.dispatchEvent(new CustomEvent('history-range-change', {
-          bubbles: true,
-          detail: { start: minVal, end: maxVal }
-        }));
+        if (emit) {
+          root.dispatchEvent(new CustomEvent('history-range-change', {
+            bubbles: true,
+            detail: { start: minVal, end: maxVal }
+          }));
+        }
       }
 
       document.addEventListener('input', (event) => {
         const input = event.target;
         if (!(input instanceof HTMLInputElement)) return;
         const root = input.closest('.double_range_slider[data-history-slider=\"1\"]');
-        if (root) update(root);
+        if (root) update(root, true);
       });
 
       const observer = new MutationObserver(() => {
-        document.querySelectorAll('.double_range_slider[data-history-slider=\"1\"]').forEach(update);
+        document.querySelectorAll('.double_range_slider[data-history-slider=\"1\"]').forEach((root) => update(root, false));
       });
       observer.observe(document.body, { childList: true, subtree: true });
-      document.querySelectorAll('.double_range_slider[data-history-slider=\"1\"]').forEach(update);
+      document.querySelectorAll('.double_range_slider[data-history-slider=\"1\"]').forEach((root) => update(root, false));
     })();
     </script>
     """
@@ -824,7 +826,7 @@ def history_graph() -> None:
         chart = ui.plotly({}).classes('w-full chart-card')
         table = ui.html('').classes('w-full')
         with ui.row().classes('justify-center gap-3 mt-4'):
-            ui.button('Actualizar historial', on_click=lambda: ui.timer(0.1, load_history, once=True)).props('unelevated')
+            ui.button('Actualizar historial', on_click=lambda: ui.timer(0.1, lambda: load_history(sync_esp=True), once=True)).props('unelevated')
             ui.button('Descargar CSV', on_click=lambda: ui.navigate.to('/api/measurements.csv')).props('flat')
 
     def update_interval_buttons() -> None:
@@ -872,19 +874,38 @@ def history_graph() -> None:
         update_interval_buttons()
         await redraw()
 
-    async def load_history() -> None:
+    async def load_history(sync_esp: bool = False) -> None:
         nonlocal frame_cache
         try:
-            status.set_text('Cargando historial...')
-            await sync_latest_measurements()
+            status.set_text('Cargando historial local...')
             rows = await asyncio.to_thread(graph_rows_all)
             frame_cache = _rows_to_frame(rows)
             if frame_cache.empty:
-                status.set_text('Error al cargar historial: no hay registros utilizables.')
+                status.set_text('Historial local vacío. Usa Actualizar historial para intentar sincronizar con el ESP32.')
             else:
                 total = len(frame_cache)
                 last = frame_cache.iloc[-1]
                 status.set_text(f'Historial cargado. Registros: {total}. Última medición: {last["fecha"]} {last["hora"]}')
+            await rebuild()
+
+            if not sync_esp:
+                return
+
+            status.set_text('Sincronizando ESP32...')
+            try:
+                await asyncio.wait_for(sync_latest_measurements(), timeout=15)
+            except TimeoutError:
+                status.set_text('Historial local cargado. Sincronización ESP32 agotó tiempo de espera.')
+                return
+
+            rows = await asyncio.to_thread(graph_rows_all)
+            frame_cache = _rows_to_frame(rows)
+            if frame_cache.empty:
+                status.set_text('No hay registros utilizables después de sincronizar.')
+            else:
+                total = len(frame_cache)
+                last = frame_cache.iloc[-1]
+                status.set_text(f'Historial sincronizado. Registros: {total}. Última medición: {last["fecha"]} {last["hora"]}')
             await rebuild()
         except ModuleNotFoundError as exc:
             status.set_text(f'Falta instalar el paquete Python: {exc.name or "plotly/pandas"}')
