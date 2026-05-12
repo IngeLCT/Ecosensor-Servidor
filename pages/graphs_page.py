@@ -798,7 +798,6 @@ def history_graph() -> None:
     current_minutes = SAMPLE_BASE_MIN
     range_start = 0
     range_end = 0
-    suppress_range_event = False
 
     with ui.element('div').classes('dashboard'):
         _nav()
@@ -833,7 +832,55 @@ def history_graph() -> None:
         with ui.column().classes('history-slider-box'):
             ui.label('Seleccione el rango del historial').classes('history-select-label')
             range_label = ui.label('Sin registros para seleccionar').classes('status-line')
-            range_slider = ui.range(min=0, max=0, value={'min': 0, 'max': 0}).props('label-always snap').classes('w-full')
+            with ui.row().classes('items-end justify-center gap-3 w-full'):
+                start_input = ui.number('Inicio', value=0, min=0, max=0, step=1).props('outlined dense').classes('w-32')
+                end_input = ui.number('Fin', value=0, min=0, max=0, step=1).props('outlined dense').classes('w-32')
+
+                async def apply_range_from_inputs() -> None:
+                    nonlocal range_start, range_end
+                    max_idx = max(0, len(current_labels) - 1)
+                    try:
+                        start_value = int(start_input.value or 0)
+                    except (TypeError, ValueError):
+                        start_value = 0
+                    try:
+                        end_value = int(end_input.value or max_idx)
+                    except (TypeError, ValueError):
+                        end_value = max_idx
+                    range_start = max(0, min(start_value, max_idx))
+                    range_end = max(0, min(end_value, max_idx))
+                    if range_start > range_end:
+                        range_start, range_end = range_end, range_start
+                    start_input.set_value(range_start)
+                    end_input.set_value(range_end)
+                    if current_labels:
+                        range_label.set_text(f'{current_labels[range_start]}  →  {current_labels[range_end]}')
+                    await redraw()
+
+                async def show_all_range() -> None:
+                    nonlocal range_start, range_end
+                    range_start = 0
+                    range_end = max(0, len(current_labels) - 1)
+                    start_input.set_value(range_start)
+                    end_input.set_value(range_end)
+                    if current_labels:
+                        range_label.set_text(f'{current_labels[range_start]}  →  {current_labels[range_end]}')
+                    await redraw()
+
+                async def show_last_24_range() -> None:
+                    nonlocal range_start, range_end
+                    max_idx = max(0, len(current_labels) - 1)
+                    range_end = max_idx
+                    range_start = max(0, max_idx - 23)
+                    start_input.set_value(range_start)
+                    end_input.set_value(range_end)
+                    if current_labels:
+                        range_label.set_text(f'{current_labels[range_start]}  →  {current_labels[range_end]}')
+                    await redraw()
+
+                ui.button('Aplicar rango', on_click=apply_range_from_inputs).props('unelevated no-caps')
+                ui.button('Todo', on_click=show_all_range).props('flat no-caps')
+                ui.button('Últimas 24', on_click=show_last_24_range).props('flat no-caps')
 
         with ui.element('div').classes('chart-card history-chart-card'):
             chart = ui.plotly({}).classes('w-full').style('height: 620px; max-height: 620px;')
@@ -875,7 +922,7 @@ def history_graph() -> None:
         table.set_content(_history_table_html(labels, values, spec, current_minutes))
 
     async def rebuild() -> None:
-        nonlocal current_labels, current_values, current_times, range_start, range_end, suppress_range_event
+        nonlocal current_labels, current_values, current_times, range_start, range_end
         if frame_cache is None:
             return
         spec = HISTORY_OPTIONS[str(selector.value)]
@@ -883,12 +930,10 @@ def history_graph() -> None:
         max_idx = max(0, len(current_labels) - 1)
         range_start = 0
         range_end = max_idx
-        range_slider.props(f'min=0 max={max_idx} step=1 label-always snap')
-        suppress_range_event = True
-        try:
-            range_slider.set_value({'min': range_start, 'max': range_end})
-        finally:
-            suppress_range_event = False
+        start_input.props(f'min=0 max={max_idx} step=1')
+        end_input.props(f'min=0 max={max_idx} step=1')
+        start_input.set_value(range_start)
+        end_input.set_value(range_end)
         if current_labels:
             range_label.set_text(f'{current_labels[range_start]}  →  {current_labels[range_end]}')
         else:
@@ -934,19 +979,5 @@ def history_graph() -> None:
         except Exception as exc:
             status.set_text(f'Error al cargar historial: {exc}')
 
-    async def on_history_range_change(e) -> None:
-        nonlocal range_start, range_end
-        if suppress_range_event:
-            return
-        value = getattr(e, 'value', None)
-        if isinstance(value, dict):
-            range_start = int(value.get('min', range_start))
-            range_end = int(value.get('max', range_end))
-        start, end = slider_bounds()
-        if current_labels:
-            range_label.set_text(f'{current_labels[start]}  →  {current_labels[end]}')
-        await redraw()
-
     selector.on('update:model-value', lambda: ui.timer(0.1, rebuild, once=True))
-    range_slider.on_value_change(on_history_range_change)
     ui.timer(0.1, load_history, once=True)
