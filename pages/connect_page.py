@@ -1,6 +1,7 @@
 from fastapi import Request
 from nicegui import ui
 
+from services.device_registry import device_id_from_host, remember_host
 from services.esp_client import build_endpoints, delete_json, normalize_host_input, sync_time_if_needed
 from shared.formatters import device_display_name
 from shared.styles import add_styles
@@ -71,8 +72,7 @@ def config_page(request: Request) -> None:
         else:
             ui.notify('ESP32 conectado con fecha/hora válida.', color='positive')
 
-        settings['esp_host'] = host
-        save_settings(settings)
+        remember_host(host)
         ui.navigate.to('/dashboard')
 
     async def clear_wifi() -> None:
@@ -114,7 +114,7 @@ def config_page(request: Request) -> None:
                     if not result.get('ok'):
                         ui.notify(f'No se pudo borrar CSV del ESP32: {result.get("data")}', color='negative')
                         return
-                    deleted = clear_measurements()
+                    deleted = clear_measurements(device_id_from_host(host))
                     ui.notify(f'Historial borrado. Filas locales eliminadas: {deleted}.', color='positive')
 
                 ui.button('Borrar historial', on_click=confirm).props('unelevated color=negative')

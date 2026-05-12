@@ -6,7 +6,8 @@ from typing import Any
 
 from nicegui import ui
 
-from services.measurement_sync import sync_latest_measurements
+from services.device_registry import active_device_options, ensure_active_devices
+from services.measurement_sync import sync_sensor_measurements
 from shared.styles import add_styles
 from storage.measurements_store import graph_rows_all, graph_rows_history
 
@@ -377,10 +378,11 @@ def _build_figure(frame: Any, spec: ChartSpec, minutes: int) -> Any:
     return fig
 
 
-async def _load_frame(limit: int = INITIAL_FETCH_LIMIT) -> tuple[Any | None, str | None]:
+async def _load_frame(device_id: str | None, limit: int = INITIAL_FETCH_LIMIT) -> tuple[Any | None, str | None]:
     try:
-        await sync_latest_measurements()
-        rows = await asyncio.to_thread(graph_rows_history, limit)
+        if device_id:
+            await sync_sensor_measurements(device_id)
+        rows = await asyncio.to_thread(graph_rows_history, limit, device_id)
         return _rows_to_frame(rows), None
     except ModuleNotFoundError as exc:
         missing = exc.name or 'plotly/pandas'
@@ -398,6 +400,7 @@ def _graph_page(page_title: str, charts: list[ChartSpec]) -> None:
     plot_widgets: dict[str, Any] = {}
     buttons: dict[str, list[Any]] = {spec.key: [] for spec in charts}
     frame_cache: Any | None = None
+    selected_device_id: str | None = None
 
     with ui.element('div').classes('dashboard'):
         _nav()
@@ -405,6 +408,9 @@ def _graph_page(page_title: str, charts: list[ChartSpec]) -> None:
             ui.label('LCT Didacticos').classes('brand-title')
             ui.image('/static/LCT.png').props('fit=contain no-spinner').classes('connect-logo')
         ui.label(page_title).classes('section-title')
+        with ui.column().classes('history-controls'):
+            ui.label('EcoSensor activo').classes('history-select-label')
+            sensor_select = ui.select({}, value=None).props('outlined dense').classes('w-full')
         status = ui.label('Cargando gráficas...').classes('status-line mt-3')
 
         for spec in charts:
@@ -444,17 +450,43 @@ def _graph_page(page_title: str, charts: list[ChartSpec]) -> None:
         except Exception as exc:
             status.set_text(f'No se pudo generar {spec.y_title}: {exc}')
 
+    async def refresh_sensor_options() -> None:
+        nonlocal selected_device_id
+        await ensure_active_devices()
+        options = active_device_options()
+        sensor_select.options = options
+        if not options:
+            selected_device_id = None
+            sensor_select.value = None
+            sensor_select.update()
+            return
+        if selected_device_id not in options:
+            selected_device_id = next(iter(options))
+            sensor_select.value = selected_device_id
+        sensor_select.update()
+
     async def refresh() -> None:
         nonlocal frame_cache
-        frame, error = await _load_frame()
+        await refresh_sensor_options()
+        if not selected_device_id:
+            status.set_text('No hay EcoSensor activos disponibles.')
+            return
+        frame, error = await _load_frame(selected_device_id)
         if error:
             status.set_text(error)
             return
         frame_cache = frame
-        status.set_text('')
+        status.set_text(f'EcoSensor seleccionado: {selected_device_id}')
         for spec in charts:
             await redraw_one(spec)
 
+    async def on_sensor_change(event: Any) -> None:
+        nonlocal selected_device_id, frame_cache
+        selected_device_id = str(event.value or '') or None
+        frame_cache = None
+        await refresh()
+
+    sensor_select.on_value_change(on_sensor_change)
     ui.timer(SERVER_REFRESH_SECONDS, refresh)
     ui.timer(0.1, refresh, once=True)
 
@@ -658,6 +690,7 @@ def history_graph() -> None:
     _add_graph_styles()
 
     frame_cache: Any | None = None
+    selected_device_id: str | None = None
     current_labels: list[str] = []
     current_values: list[float] = []
     current_times: list[Any] = []
@@ -676,6 +709,8 @@ def history_graph() -> None:
         ui.separator()
         ui.label('Gráfica de Datos Historico').classes('section-title')
         with ui.column().classes('history-controls'):
+            ui.label('EcoSensor activo').classes('history-select-label')
+            sensor_select = ui.select({}, value=None).props('outlined dense').classes('w-full')
             ui.label('Seleccionar Dato a Graficar:').classes('history-select-label')
             selector = ui.select(HISTORY_SELECT_OPTIONS, value='pm1p0').props('outlined dense').classes('w-full')
         with ui.column().classes('agg-toolbar-wrap'):
@@ -788,18 +823,39 @@ def history_graph() -> None:
         _reset_history_range()
         await redraw()
 
+    async def refresh_sensor_options() -> None:
+        nonlocal selected_device_id
+        await ensure_active_devices()
+        options = active_device_options()
+        sensor_select.options = options
+        if not options:
+            selected_device_id = None
+            sensor_select.value = None
+            sensor_select.update()
+            return
+        if selected_device_id not in options:
+            selected_device_id = next(iter(options))
+            sensor_select.value = selected_device_id
+        sensor_select.update()
+
     async def load_history() -> None:
         nonlocal frame_cache
         try:
+            await refresh_sensor_options()
+            if not selected_device_id:
+                frame_cache = _rows_to_frame([])
+                status.set_text('No hay EcoSensor activos disponibles.')
+                await rebuild()
+                return
             status.set_text('Cargando historial almacenado...')
-            rows = await asyncio.to_thread(graph_rows_all)
+            rows = await asyncio.to_thread(graph_rows_all, selected_device_id)
             frame_cache = _rows_to_frame(rows)
             if frame_cache.empty:
-                status.set_text('Historial local vacío. No hay registros almacenados para graficar.')
+                status.set_text(f'Historial local vacío para {selected_device_id}. No hay registros almacenados para graficar.')
             else:
                 total = len(frame_cache)
                 last = frame_cache.iloc[-1]
-                status.set_text(f'Historial cargado. Registros: {total}. Última medición: {last["fecha"]} {last["hora"]}')
+                status.set_text(f'Historial cargado para {selected_device_id}. Registros: {total}. Última medición: {last["fecha"]} {last["hora"]}')
             await rebuild()
         except ModuleNotFoundError as exc:
             status.set_text(f'Falta instalar el paquete Python: {exc.name or "plotly/pandas"}')
@@ -825,7 +881,14 @@ def history_graph() -> None:
         _update_history_range_labels()
         await redraw()
 
+    async def on_sensor_change(event: Any) -> None:
+        nonlocal selected_device_id, frame_cache
+        selected_device_id = str(event.value or '') or None
+        frame_cache = None
+        await load_history()
+
     history_range.on('update:model-value', on_history_range_change)
+    sensor_select.on_value_change(on_sensor_change)
     selector.on('update:model-value', lambda: ui.timer(0.1, rebuild, once=True))
     ui.timer(0.1, load_history, once=True)
 

@@ -2,18 +2,19 @@ from typing import Any
 
 from nicegui import ui
 
-from services.measurement_sync import display_host, sync_latest_measurements
+from services.device_registry import active_device_options, ensure_active_devices
+from services.measurement_sync import sync_sensor_measurements
 from shared.formatters import format_value
 from shared.styles import add_styles
 from pages.pollutants_modal import pollutants_info_card
-from storage.settings_store import load_settings
 
 
 @ui.page('/dashboard')
 def dashboard() -> None:
     ui.page_title('EcoSensor Mediciones')
     add_styles()
-    load_settings()
+
+    selected_device_id: str | None = None
 
     with ui.element('div').classes('dashboard'):
         with ui.element('nav').classes('top-nav'):
@@ -33,7 +34,9 @@ def dashboard() -> None:
             ui.image('/static/LCT.png').props('fit=contain no-spinner').classes('connect-logo')
 
         ui.label('Mediciones Ambientales').classes('section-title')
-        id_label = ui.label('').classes('section-title')
+        with ui.column().classes('history-controls'):
+            ui.label('EcoSensor activo').classes('history-select-label')
+            sensor_select = ui.select({}, value=None).props('outlined dense').classes('w-full')
 
         pollutants_info_card()
 
@@ -42,7 +45,10 @@ def dashboard() -> None:
         time_info = ui.html('').classes('status-line')
         connection_info = ui.label('').classes('status-line mt-3')
         with ui.row().classes('justify-center gap-3 mt-4'):
-            ui.button('Descargar CSV', on_click=lambda: ui.navigate.to('/api/measurements.csv')).classes('button1')
+            ui.button(
+                'Descargar CSV',
+                on_click=lambda: ui.navigate.to(f'/api/measurements.csv?device_id={selected_device_id or ""}'),
+            ).classes('button1')
 
     def render_table(row: dict[str, Any] | None) -> None:
         if not row:
@@ -74,67 +80,72 @@ def dashboard() -> None:
         value = (date_value or '').strip()
         if not value:
             return ''
-
-        # Acepta fechas tipo:
-        # 2026-05-11
-        # 2026.05.11
-        # 2026/05/11
         normalized = value.replace('.', '-').replace('/', '-')
         parts = normalized.split('-')
-
         if len(parts) >= 3 and len(parts[0]) == 4:
-            year = parts[0]
-            month = parts[1].zfill(2)
-            day = parts[2].zfill(2)
-            return f'{day}-{month}-{year}'
-
+            return f'{parts[2].zfill(2)}-{parts[1].zfill(2)}-{parts[0]}'
         return value
 
     def clean_time(time_value: str) -> str:
-        value = (time_value or '').strip()
-        if not value:
-            return ''
-
-        value = value.rstrip('Z')
-
+        value = (time_value or '').strip().rstrip('Z')
         if '+' in value:
             value = value.split('+', 1)[0]
-
-        # Para casos tipo 12:23:19-06:00
         if len(value) >= 8 and value[2] == ':' and value[5] == ':':
             return value[:8]
-
         return value
 
     def split_timestamp(timestamp: str) -> tuple[str, str]:
         value = (timestamp or '').strip()
         if not value:
             return '', ''
-
         if 'T' in value:
             date_part, time_part = value.split('T', 1)
             return format_date_dd_mm_yyyy(date_part), clean_time(time_part)
-
         if ' ' in value:
             date_part, time_part = value.split(' ', 1)
             return format_date_dd_mm_yyyy(date_part), clean_time(time_part)
-
         return format_date_dd_mm_yyyy(value), ''
 
-    async def refresh() -> None:
-        row = await sync_latest_measurements()
+    async def refresh_sensor_options() -> None:
+        nonlocal selected_device_id
+        await ensure_active_devices()
+        options = active_device_options()
+        sensor_select.options = options
+        if not options:
+            selected_device_id = None
+            sensor_select.value = None
+            sensor_select.update()
+            return
+        if selected_device_id not in options:
+            selected_device_id = next(iter(options))
+            sensor_select.value = selected_device_id
+        sensor_select.update()
 
+    async def refresh() -> None:
+        await refresh_sensor_options()
+        if not selected_device_id:
+            render_table(None)
+            date_info.set_content('')
+            time_info.set_content('')
+            connection_info.set_text('No hay EcoSensor activos disponibles.')
+            return
+
+        row = await sync_sensor_measurements(selected_device_id)
         render_table(row)
-        id_label.set_text(f"ID: {display_host((row or {}).get('host') or '')}")
         timestamp = (row or {}).get('timestamp') or ''
         date_part, time_part = split_timestamp(timestamp)
-        date_info.set_content(
-            f'<strong>Fecha última medición:</strong> {date_part}' if date_part else ''
-        )
-        time_info.set_content(
-            f'<strong>Hora última medición:</strong> {time_part}' if time_part else ''
-        )
-        connection_info.set_text('')
+        date_info.set_content(f'<strong>Fecha última medición:</strong> {date_part}' if date_part else '')
+        time_info.set_content(f'<strong>Hora última medición:</strong> {time_part}' if time_part else '')
+        if row:
+            connection_info.set_text(f'EcoSensor seleccionado: {selected_device_id}')
+        else:
+            connection_info.set_text(f'{selected_device_id} activo, sin mediciones almacenadas todavía.')
 
+    async def on_sensor_change(event: Any) -> None:
+        nonlocal selected_device_id
+        selected_device_id = str(event.value or '') or None
+        await refresh()
+
+    sensor_select.on_value_change(on_sensor_change)
     ui.timer(60.0, refresh)
     ui.timer(0.1, refresh, once=True)

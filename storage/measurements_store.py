@@ -33,9 +33,26 @@ CREATE TABLE IF NOT EXISTS measurements (
 '''
 
 
-def ensure_db() -> None:
+def _safe_device_id(device_id: str | None = None) -> str:
+    value = str(device_id or 'ecosensor01').strip().lower()
+    return ''.join(ch for ch in value if ch.isalnum() or ch in {'_', '-'}) or 'ecosensor01'
+
+
+def db_file_for_device(device_id: str | None = None):
+    """Devuelve el archivo SQLite independiente para un EcoSensor.
+
+    Compatibilidad: el historial existente se conserva como `ecosensor01` usando
+    `data/measurements.sqlite3`. Los demás sensores usan un archivo separado.
+    """
+    safe_id = _safe_device_id(device_id)
+    if safe_id == 'ecosensor01':
+        return MEASUREMENTS_DB_FILE
+    return DATA_DIR / f'measurements_{safe_id}.sqlite3'
+
+
+def ensure_db(device_id: str | None = None) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(MEASUREMENTS_DB_FILE) as conn:
+    with sqlite3.connect(db_file_for_device(device_id)) as conn:
         conn.executescript(SCHEMA)
         columns = {row[1] for row in conn.execute('PRAGMA table_info(measurements)')}
         if 'source_id' not in columns:
@@ -65,10 +82,10 @@ def ensure_db() -> None:
         conn.execute('CREATE INDEX IF NOT EXISTS idx_measurements_received_at ON measurements(received_at)')
 
 
-def clear_measurements() -> int:
+def clear_measurements(device_id: str | None = None) -> int:
     """Borra el historial local del servidor y reinicia el contador SQLite."""
-    ensure_db()
-    with sqlite3.connect(MEASUREMENTS_DB_FILE) as conn:
+    ensure_db(device_id)
+    with sqlite3.connect(db_file_for_device(device_id)) as conn:
         deleted = conn.execute('DELETE FROM measurements').rowcount
         conn.execute("DELETE FROM sqlite_sequence WHERE name = 'measurements'")
         conn.commit()
@@ -133,9 +150,9 @@ def _measurement_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
-def get_latest_measurement() -> dict[str, Any] | None:
-    ensure_db()
-    with sqlite3.connect(MEASUREMENTS_DB_FILE) as conn:
+def get_latest_measurement(device_id: str | None = None) -> dict[str, Any] | None:
+    ensure_db(device_id)
+    with sqlite3.connect(db_file_for_device(device_id)) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             '''
@@ -152,8 +169,8 @@ def get_latest_measurement() -> dict[str, Any] | None:
 
 
 def latest_source_id(device_id: str = 'ecosensor01') -> int:
-    ensure_db()
-    with sqlite3.connect(MEASUREMENTS_DB_FILE) as conn:
+    ensure_db(device_id)
+    with sqlite3.connect(db_file_for_device(device_id)) as conn:
         value = conn.execute(
             'SELECT COALESCE(MAX(source_id), 0) FROM measurements WHERE device_id = ?',
             (device_id,),
@@ -194,10 +211,10 @@ def _graph_row(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
-def graph_latest_row() -> dict[str, Any] | None:
-    ensure_db()
-    repair_future_estimated_timestamps()
-    with sqlite3.connect(MEASUREMENTS_DB_FILE) as conn:
+def graph_latest_row(device_id: str | None = None) -> dict[str, Any] | None:
+    ensure_db(device_id)
+    repair_future_estimated_timestamps(device_id)
+    with sqlite3.connect(db_file_for_device(device_id)) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             '''
@@ -212,11 +229,11 @@ def graph_latest_row() -> dict[str, Any] | None:
     return _graph_row(row) if row else None
 
 
-def graph_rows_history(limit: int = 5000) -> list[dict[str, Any]]:
-    ensure_db()
-    repair_future_estimated_timestamps()
+def graph_rows_history(limit: int = 5000, device_id: str | None = None) -> list[dict[str, Any]]:
+    ensure_db(device_id)
+    repair_future_estimated_timestamps(device_id)
     limit = max(1, min(20000, int(limit)))
-    with sqlite3.connect(MEASUREMENTS_DB_FILE) as conn:
+    with sqlite3.connect(db_file_for_device(device_id)) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             '''
@@ -238,10 +255,10 @@ def graph_rows_history(limit: int = 5000) -> list[dict[str, Any]]:
     return [_graph_row(row) for row in rows]
 
 
-def graph_rows_all() -> list[dict[str, Any]]:
-    ensure_db()
-    repair_future_estimated_timestamps()
-    with sqlite3.connect(MEASUREMENTS_DB_FILE) as conn:
+def graph_rows_all(device_id: str | None = None) -> list[dict[str, Any]]:
+    ensure_db(device_id)
+    repair_future_estimated_timestamps(device_id)
+    with sqlite3.connect(db_file_for_device(device_id)) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             '''
@@ -255,12 +272,12 @@ def graph_rows_all() -> list[dict[str, Any]]:
     return [_graph_row(row) for row in rows]
 
 
-def graph_rows_since(row_id: int, limit: int = 500) -> list[dict[str, Any]]:
-    ensure_db()
-    repair_future_estimated_timestamps()
+def graph_rows_since(row_id: int, limit: int = 500, device_id: str | None = None) -> list[dict[str, Any]]:
+    ensure_db(device_id)
+    repair_future_estimated_timestamps(device_id)
     row_id = max(0, int(row_id))
     limit = max(1, min(20000, int(limit)))
-    with sqlite3.connect(MEASUREMENTS_DB_FILE) as conn:
+    with sqlite3.connect(db_file_for_device(device_id)) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             '''
@@ -277,13 +294,13 @@ def graph_rows_since(row_id: int, limit: int = 500) -> list[dict[str, Any]]:
     return [_graph_row(row) for row in rows]
 
 
-def repair_future_estimated_timestamps() -> int:
+def repair_future_estimated_timestamps(device_id: str | None = None) -> int:
     """Corrige timestamps estimados guardados en UTC como si fueran hora local.
 
     Si el servidor corre en zona horaria local distinta de UTC, una estimación vieja pudo
     quedar adelantada varias horas. Solo toca filas estimadas/no confiables en el futuro.
     """
-    ensure_db()
+    ensure_db(device_id)
     offset = datetime.now().astimezone().utcoffset() or timedelta(0)
     if offset == timedelta(0):
         return 0
@@ -291,7 +308,7 @@ def repair_future_estimated_timestamps() -> int:
     now_local = datetime.now().replace(tzinfo=None)
     max_allowed = now_local + timedelta(minutes=10)
     repaired = 0
-    with sqlite3.connect(MEASUREMENTS_DB_FILE) as conn:
+    with sqlite3.connect(db_file_for_device(device_id)) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             '''
@@ -322,9 +339,9 @@ def repair_future_estimated_timestamps() -> int:
     return repaired
 
 
-def measurements_csv_text() -> str:
-    ensure_db()
-    repair_future_estimated_timestamps()
+def measurements_csv_text(device_id: str | None = None) -> str:
+    ensure_db(device_id)
+    repair_future_estimated_timestamps(device_id)
     output = io.StringIO()
     fieldnames = [
         'id', 'device_id', 'Fecha de medicion', 'Hora de medicion',
@@ -334,7 +351,7 @@ def measurements_csv_text() -> str:
     writer = csv.DictWriter(output, fieldnames=fieldnames)
     writer.writeheader()
 
-    with sqlite3.connect(MEASUREMENTS_DB_FILE) as conn:
+    with sqlite3.connect(db_file_for_device(device_id)) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             '''
@@ -368,9 +385,9 @@ def measurements_csv_text() -> str:
 
 def save_measurement(host: str, row: dict[str, Any]) -> bool:
     """Guarda una medición válida. Devuelve True si insertó una fila nueva."""
-    ensure_db()
     received_at = datetime.now(timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z')
     device_id = str(row.get('id') or row.get('device_id') or '').strip() or 'ecosensor01'
+    ensure_db(device_id)
     device_timestamp = row.get('timestamp') or None
     source_id = _source_id_from_row(row)
     time_valid_bool = _bool_or_none(row.get('time_valid'))
@@ -399,7 +416,7 @@ def save_measurement(host: str, row: dict[str, Any]) -> bool:
         'window_s': _int_or_none(row.get('window_s')),
     }
 
-    with sqlite3.connect(MEASUREMENTS_DB_FILE) as conn:
+    with sqlite3.connect(db_file_for_device(device_id)) as conn:
         cursor = conn.execute(
             '''
             INSERT OR IGNORE INTO measurements (
