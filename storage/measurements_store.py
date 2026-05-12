@@ -15,6 +15,10 @@ CREATE TABLE IF NOT EXISTS measurements (
     device_timestamp TEXT,
     received_at TEXT NOT NULL,
     source_id INTEGER,
+    boot_id INTEGER,
+    uptime_s INTEGER,
+    time_valid INTEGER,
+    time_source TEXT,
     pm1p0 REAL,
     pm2p5 REAL,
     pm4p0 REAL,
@@ -36,6 +40,14 @@ def ensure_db() -> None:
         columns = {row[1] for row in conn.execute('PRAGMA table_info(measurements)')}
         if 'source_id' not in columns:
             conn.execute('ALTER TABLE measurements ADD COLUMN source_id INTEGER')
+        if 'boot_id' not in columns:
+            conn.execute('ALTER TABLE measurements ADD COLUMN boot_id INTEGER')
+        if 'uptime_s' not in columns:
+            conn.execute('ALTER TABLE measurements ADD COLUMN uptime_s INTEGER')
+        if 'time_valid' not in columns:
+            conn.execute('ALTER TABLE measurements ADD COLUMN time_valid INTEGER')
+        if 'time_source' not in columns:
+            conn.execute('ALTER TABLE measurements ADD COLUMN time_source TEXT')
         conn.execute(
             '''
             CREATE UNIQUE INDEX IF NOT EXISTS idx_measurements_device_timestamp
@@ -71,6 +83,18 @@ def _int_or_none(value: Any) -> int | None:
         return None
 
 
+def _bool_or_none(value: Any) -> bool | None:
+    if value is None or value == '':
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {'1', 'true', 'yes', 'si', 'sí'}
+    return bool(value)
+
+
 def _source_id_from_row(row: dict[str, Any]) -> int | None:
     return _int_or_none(row.get('measurement_id') or row.get('source_id'))
 
@@ -82,6 +106,10 @@ def _measurement_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         'timestamp': row['device_timestamp'],
         'received_at': row['received_at'],
         'measurement_id': row['source_id'],
+        'boot_id': row['boot_id'],
+        'uptime_s': row['uptime_s'],
+        'time_valid': bool(row['time_valid']) if row['time_valid'] is not None else None,
+        'time_source': row['time_source'],
         'pm1p0': row['pm1p0'],
         'pm2p5': row['pm2p5'],
         'pm4p0': row['pm4p0'],
@@ -102,6 +130,7 @@ def get_latest_measurement() -> dict[str, Any] | None:
         row = conn.execute(
             '''
             SELECT device_id, host, device_timestamp, received_at, source_id,
+                   boot_id, uptime_s, time_valid, time_source,
                    pm1p0, pm2p5, pm4p0, pm10p0,
                    voc, nox, co2, temp, hum, window_s
             FROM measurements
@@ -284,6 +313,9 @@ def save_measurement(host: str, row: dict[str, Any]) -> bool:
     device_id = str(row.get('id') or row.get('device_id') or '').strip() or 'ecosensor01'
     device_timestamp = row.get('timestamp') or None
     source_id = _source_id_from_row(row)
+    time_valid_bool = _bool_or_none(row.get('time_valid'))
+    time_valid = None if time_valid_bool is None else int(time_valid_bool)
+    time_source = row.get('time_source') or ('esp' if time_valid else 'estimated' if time_valid == 0 else None)
 
     values = {
         'device_id': device_id,
@@ -291,6 +323,10 @@ def save_measurement(host: str, row: dict[str, Any]) -> bool:
         'device_timestamp': device_timestamp,
         'received_at': received_at,
         'source_id': source_id,
+        'boot_id': _int_or_none(row.get('boot_id')),
+        'uptime_s': _int_or_none(row.get('uptime_s')),
+        'time_valid': time_valid,
+        'time_source': time_source,
         'pm1p0': _float_or_none(row.get('pm1p0')),
         'pm2p5': _float_or_none(row.get('pm2p5')),
         'pm4p0': _float_or_none(row.get('pm4p0')),
@@ -308,10 +344,12 @@ def save_measurement(host: str, row: dict[str, Any]) -> bool:
             '''
             INSERT OR IGNORE INTO measurements (
                 device_id, host, device_timestamp, received_at, source_id,
+                boot_id, uptime_s, time_valid, time_source,
                 pm1p0, pm2p5, pm4p0, pm10p0,
                 voc, nox, co2, temp, hum, window_s
             ) VALUES (
                 :device_id, :host, :device_timestamp, :received_at, :source_id,
+                :boot_id, :uptime_s, :time_valid, :time_source,
                 :pm1p0, :pm2p5, :pm4p0, :pm10p0,
                 :voc, :nox, :co2, :temp, :hum, :window_s
             )

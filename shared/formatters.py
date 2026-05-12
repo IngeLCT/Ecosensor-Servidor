@@ -14,6 +14,10 @@ def row_from_payload(payload: dict[str, Any] | None) -> dict[str, Any] | None:
     return {
         'id': payload.get('device_id', DEVICE_ID),
         'measurement_id': payload.get('measurement_id') or payload.get('id'),
+        'boot_id': payload.get('boot_id'),
+        'uptime_s': payload.get('uptime_s'),
+        'time_valid': payload.get('time_valid'),
+        'time_source': payload.get('time_source'),
         'timestamp': payload.get('timestamp'),
         'pm1p0': payload.get('pm1p0'),
         'pm2p5': payload.get('pm2p5'),
