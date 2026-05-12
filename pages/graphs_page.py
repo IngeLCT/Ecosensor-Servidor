@@ -179,8 +179,17 @@ def _add_graph_styles() -> None:
         .history-slider-box {
             width: 100%;
             max-width: 900px;
-            margin: 2em auto;
-            padding: 2em 1em;
+            margin: 10px auto 8px auto;
+            padding: 8px 4px 18px 4px;
+            box-sizing: border-box;
+        }
+        .history-range-label {
+            font-weight: bold;
+            font-size: 16px;
+            font-family: Arial, sans-serif;
+            color: #000;
+            text-align: left;
+            margin-bottom: 10px;
         }
         .data-table-container {
             width: 100%;
@@ -653,6 +662,8 @@ def history_graph() -> None:
     current_values: list[float] = []
     current_times: list[Any] = []
     current_minutes = SAMPLE_BASE_MIN
+    visible_start_index = 0
+    visible_end_index = 0
 
     with ui.element('div').classes('dashboard'):
         _nav()
@@ -669,6 +680,19 @@ def history_graph() -> None:
             selector = ui.select(HISTORY_SELECT_OPTIONS, value='pm1p0').props('outlined dense').classes('w-full')
         with ui.column().classes('agg-toolbar-wrap'):
             ui.label('Historial').classes('agg-chart-title')
+
+            with ui.column().classes('history-slider-box'):
+                ui.label('Seleccione el rango de mediciones a visualizar').classes('history-range-label')
+                history_range = (
+                    ui.range(
+                        min=0,
+                        max=0,
+                        value={'min': 0, 'max': 0},
+                    )
+                    .props('label-always left-label-value="-" right-label-value="-"')
+                    .classes('w-full')
+                )
+
             ui.label('Seleccione el intervalo de lecturas').classes('agg-toolbar-label')
             interval_buttons: list[Any] = []
             with ui.row().classes('agg-toolbar'):
@@ -687,6 +711,53 @@ def history_graph() -> None:
             chart = ui.plotly({}).classes('w-full').style('height: 620px; max-height: 620px;')
         table = ui.html('').classes('w-full')
 
+    def _visible_history_slice() -> tuple[list[str], list[float], list[Any]]:
+        if not current_labels:
+            return [], [], []
+
+        start = max(0, min(visible_start_index, len(current_labels) - 1))
+        end = max(start, min(visible_end_index, len(current_labels) - 1))
+        return (
+            current_labels[start:end + 1],
+            current_values[start:end + 1],
+            current_times[start:end + 1],
+        )
+
+    def _update_history_range_labels() -> None:
+        if not current_labels:
+            history_range._props['left-label-value'] = '-'
+            history_range._props['right-label-value'] = '-'
+            history_range.update()
+            return
+
+        start = max(0, min(visible_start_index, len(current_labels) - 1))
+        end = max(start, min(visible_end_index, len(current_labels) - 1))
+        history_range._props['left-label-value'] = current_labels[start]
+        history_range._props['right-label-value'] = current_labels[end]
+        history_range.update()
+
+    def _reset_history_range() -> None:
+        nonlocal visible_start_index, visible_end_index
+
+        total = len(current_labels)
+        if total <= 0:
+            visible_start_index = 0
+            visible_end_index = 0
+            history_range._props['min'] = 0
+            history_range._props['max'] = 0
+            history_range.value = {'min': 0, 'max': 0}
+            history_range.update()
+            _update_history_range_labels()
+            return
+
+        visible_start_index = 0
+        visible_end_index = total - 1
+        history_range._props['min'] = 0
+        history_range._props['max'] = total - 1
+        history_range.value = {'min': visible_start_index, 'max': visible_end_index}
+        history_range.update()
+        _update_history_range_labels()
+
     def update_interval_buttons() -> None:
         for button, (_, minutes) in zip(interval_buttons, HISTORY_MENU):
             if minutes == current_minutes:
@@ -700,10 +771,12 @@ def history_graph() -> None:
             chart.update()
             table.set_content('')
             return
+
         spec = HISTORY_OPTIONS[str(selector.value)]
-        chart.figure = _build_history_figure(current_labels, current_values, current_times, spec, current_minutes)
+        visible_labels, visible_values, visible_times = _visible_history_slice()
+        chart.figure = _build_history_figure(visible_labels, visible_values, visible_times, spec, current_minutes)
         chart.update()
-        table.set_content(_history_table_html(current_labels, current_values, spec, current_minutes))
+        table.set_content(_history_table_html(visible_labels, visible_values, spec, current_minutes))
 
     async def rebuild() -> None:
         nonlocal current_labels, current_values, current_times
@@ -712,6 +785,7 @@ def history_graph() -> None:
         spec = HISTORY_OPTIONS[str(selector.value)]
         current_labels, current_values, current_times = _history_series_data(frame_cache, spec, current_minutes)
         update_interval_buttons()
+        _reset_history_range()
         await redraw()
 
     async def load_history() -> None:
@@ -732,5 +806,26 @@ def history_graph() -> None:
         except Exception as exc:
             status.set_text(f'Error al cargar historial: {exc}')
 
+    async def on_history_range_change(event: Any) -> None:
+        nonlocal visible_start_index, visible_end_index
+
+        if not current_labels:
+            return
+
+        value = event.args if isinstance(event.args, dict) else history_range.value
+        if not isinstance(value, dict):
+            return
+
+        raw_min = int(value.get('min', 0))
+        raw_max = int(value.get('max', len(current_labels) - 1))
+
+        visible_start_index = max(0, min(raw_min, len(current_labels) - 1))
+        visible_end_index = max(visible_start_index, min(raw_max, len(current_labels) - 1))
+
+        _update_history_range_labels()
+        await redraw()
+
+    history_range.on('update:model-value', on_history_range_change)
     selector.on('update:model-value', lambda: ui.timer(0.1, rebuild, once=True))
     ui.timer(0.1, load_history, once=True)
+
