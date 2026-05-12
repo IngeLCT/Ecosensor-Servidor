@@ -65,6 +65,16 @@ def ensure_db() -> None:
         conn.execute('CREATE INDEX IF NOT EXISTS idx_measurements_received_at ON measurements(received_at)')
 
 
+def clear_measurements() -> int:
+    """Borra el historial local del servidor y reinicia el contador SQLite."""
+    ensure_db()
+    with sqlite3.connect(MEASUREMENTS_DB_FILE) as conn:
+        deleted = conn.execute('DELETE FROM measurements').rowcount
+        conn.execute("DELETE FROM sqlite_sequence WHERE name = 'measurements'")
+        conn.commit()
+    return int(deleted or 0)
+
+
 def _float_or_none(value: Any) -> float | None:
     if value is None or value == '':
         return None

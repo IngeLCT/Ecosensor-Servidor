@@ -832,53 +832,42 @@ def history_graph() -> None:
         with ui.column().classes('history-slider-box'):
             ui.label('Seleccione el rango del historial').classes('history-select-label')
             range_label = ui.label('Sin registros para seleccionar').classes('status-line')
-            with ui.row().classes('items-end justify-center gap-3 w-full'):
-                start_input = ui.number('Inicio', value=0, min=0, max=0, step=1).props('outlined dense').classes('w-32')
-                end_input = ui.number('Fin', value=0, min=0, max=0, step=1).props('outlined dense').classes('w-32')
+            range_slider = ui.range(min=0, max=0, value={'min': 0, 'max': 0}).props('label-always snap').classes('w-full')
 
-                async def apply_range_from_inputs() -> None:
-                    nonlocal range_start, range_end
-                    max_idx = max(0, len(current_labels) - 1)
-                    try:
-                        start_value = int(start_input.value or 0)
-                    except (TypeError, ValueError):
-                        start_value = 0
-                    try:
-                        end_value = int(end_input.value or max_idx)
-                    except (TypeError, ValueError):
-                        end_value = max_idx
-                    range_start = max(0, min(start_value, max_idx))
-                    range_end = max(0, min(end_value, max_idx))
-                    if range_start > range_end:
-                        range_start, range_end = range_end, range_start
-                    start_input.set_value(range_start)
-                    end_input.set_value(range_end)
-                    if current_labels:
-                        range_label.set_text(f'{current_labels[range_start]}  →  {current_labels[range_end]}')
-                    await redraw()
+            async def apply_range_from_slider() -> None:
+                nonlocal range_start, range_end
+                value = range_slider.value if isinstance(range_slider.value, dict) else {}
+                max_idx = max(0, len(current_labels) - 1)
+                range_start = max(0, min(int(value.get('min', 0)), max_idx))
+                range_end = max(0, min(int(value.get('max', max_idx)), max_idx))
+                if range_start > range_end:
+                    range_start, range_end = range_end, range_start
+                range_slider.set_value({'min': range_start, 'max': range_end})
+                if current_labels:
+                    range_label.set_text(f'{current_labels[range_start]}  →  {current_labels[range_end]}')
+                await redraw()
 
-                async def show_all_range() -> None:
-                    nonlocal range_start, range_end
-                    range_start = 0
-                    range_end = max(0, len(current_labels) - 1)
-                    start_input.set_value(range_start)
-                    end_input.set_value(range_end)
-                    if current_labels:
-                        range_label.set_text(f'{current_labels[range_start]}  →  {current_labels[range_end]}')
-                    await redraw()
+            async def show_all_range() -> None:
+                nonlocal range_start, range_end
+                range_start = 0
+                range_end = max(0, len(current_labels) - 1)
+                range_slider.set_value({'min': range_start, 'max': range_end})
+                if current_labels:
+                    range_label.set_text(f'{current_labels[range_start]}  →  {current_labels[range_end]}')
+                await redraw()
 
-                async def show_last_24_range() -> None:
-                    nonlocal range_start, range_end
-                    max_idx = max(0, len(current_labels) - 1)
-                    range_end = max_idx
-                    range_start = max(0, max_idx - 23)
-                    start_input.set_value(range_start)
-                    end_input.set_value(range_end)
-                    if current_labels:
-                        range_label.set_text(f'{current_labels[range_start]}  →  {current_labels[range_end]}')
-                    await redraw()
+            async def show_last_24_range() -> None:
+                nonlocal range_start, range_end
+                max_idx = max(0, len(current_labels) - 1)
+                range_end = max_idx
+                range_start = max(0, max_idx - 23)
+                range_slider.set_value({'min': range_start, 'max': range_end})
+                if current_labels:
+                    range_label.set_text(f'{current_labels[range_start]}  →  {current_labels[range_end]}')
+                await redraw()
 
-                ui.button('Aplicar rango', on_click=apply_range_from_inputs).props('unelevated no-caps')
+            with ui.row().classes('justify-center gap-3 w-full'):
+                ui.button('Aplicar rango', on_click=apply_range_from_slider).props('unelevated no-caps')
                 ui.button('Todo', on_click=show_all_range).props('flat no-caps')
                 ui.button('Últimas 24', on_click=show_last_24_range).props('flat no-caps')
 
@@ -930,10 +919,8 @@ def history_graph() -> None:
         max_idx = max(0, len(current_labels) - 1)
         range_start = 0
         range_end = max_idx
-        start_input.props(f'min=0 max={max_idx} step=1')
-        end_input.props(f'min=0 max={max_idx} step=1')
-        start_input.set_value(range_start)
-        end_input.set_value(range_end)
+        range_slider.props(f'min=0 max={max_idx} step=1 label-always snap')
+        range_slider.set_value({'min': range_start, 'max': range_end})
         if current_labels:
             range_label.set_text(f'{current_labels[range_start]}  →  {current_labels[range_end]}')
         else:

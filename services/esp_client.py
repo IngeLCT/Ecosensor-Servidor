@@ -38,11 +38,18 @@ def build_endpoints(host: str) -> dict[str, str]:
         'lecturas_since': f'{base_url}/lecturas/since' if base_url else '',
         'config': f'{base_url}/config' if base_url else '',
         'time': f'{base_url}/time' if base_url else '',
+        'wifi_clear': f'{base_url}/wifi/clear' if base_url else '',
+        'readings_clear': f'{base_url}/lecturas/clear' if base_url else '',
     }
 
 
 def fetch_json_sync(url: str, timeout: float = 8.0) -> dict[str, Any]:
     request = Request(url, headers={'Accept': 'application/json'})
+    return request_json_sync(request, url, timeout)
+
+
+def delete_json_sync(url: str, timeout: float = 8.0) -> dict[str, Any]:
+    request = Request(url, headers={'Accept': 'application/json'}, method='DELETE')
     return request_json_sync(request, url, timeout)
 
 
@@ -79,6 +86,10 @@ async def fetch_json(url: str) -> dict[str, Any]:
 
 async def post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
     return await asyncio.to_thread(post_json_sync, url, payload)
+
+
+async def delete_json(url: str) -> dict[str, Any]:
+    return await asyncio.to_thread(delete_json_sync, url)
 
 
 def candidate_hosts(saved_host: str, default_host: str) -> list[str]:
