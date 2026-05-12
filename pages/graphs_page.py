@@ -462,10 +462,6 @@ def _graph_page(page_title: str, charts: list[ChartSpec]) -> None:
                         button.on('click', select_interval)
                 plot_widgets[spec.key] = ui.plotly({}).classes('w-full')
 
-        with ui.row().classes('justify-center gap-3 mt-4'):
-            ui.button('Actualizar', on_click=lambda: ui.timer(0.1, refresh, once=True)).props('unelevated')
-            ui.button('Descargar CSV', on_click=lambda: ui.navigate.to('/api/measurements.csv')).props('flat')
-
     def update_active_buttons(spec: ChartSpec) -> None:
         active_minutes = states[spec.key]
         for button, (_, minutes) in zip(buttons[spec.key], MENU):

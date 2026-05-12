@@ -42,7 +42,7 @@ def dashboard() -> None:
         time_info = ui.html('').classes('status-line')
         connection_info = ui.label('').classes('status-line mt-3')
         with ui.row().classes('justify-center gap-3 mt-4'):
-            ui.button('Descargar CSV', on_click=lambda: ui.navigate.to('/api/measurements.csv')).props('flat')
+            ui.button('Descargar CSV', on_click=lambda: ui.navigate.to('/api/measurements.csv')).classes('button1')
 
     def render_table(row: dict[str, Any] | None) -> None:
         if not row:
