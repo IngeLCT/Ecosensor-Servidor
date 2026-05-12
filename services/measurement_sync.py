@@ -9,8 +9,13 @@ from storage.measurements_store import get_latest_measurement, latest_source_id,
 from storage.settings_store import load_settings, save_settings
 
 
-def _iso_utc(dt: datetime) -> str:
-    return dt.astimezone(timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z')
+def _iso_local(dt: datetime) -> str:
+    """Devuelve fecha/hora local del servidor, sin marcarla como UTC.
+
+    El ESP32 recibe hora local desde este servidor; para que gráficas y CSV no muestren
+    horas adelantadas, los timestamps estimados también se guardan en hora local.
+    """
+    return dt.astimezone().replace(tzinfo=None).isoformat(timespec='seconds')
 
 
 def _bool_or_none(value: Any) -> bool | None:
@@ -25,13 +30,17 @@ def _bool_or_none(value: Any) -> bool | None:
     return bool(value)
 
 
-def _enrich_time_metadata(item: dict[str, Any], current_uptime_s: Any, server_now: datetime) -> None:
+def _enrich_time_metadata(item: dict[str, Any], current_uptime_s: Any, server_now: datetime, current_boot_id: Any = None) -> None:
     parsed_time_valid = _bool_or_none(item.get('time_valid'))
     time_valid = bool(parsed_time_valid) or (parsed_time_valid is None and bool(item.get('timestamp')))
     item['time_valid'] = time_valid
     item['time_source'] = 'esp' if time_valid else 'estimated'
 
     if time_valid and item.get('timestamp'):
+        return
+
+    same_boot = str(item.get('boot_id') or '') == str(current_boot_id or '') if current_boot_id is not None else True
+    if not same_boot:
         return
 
     try:
@@ -41,7 +50,10 @@ def _enrich_time_metadata(item: dict[str, Any], current_uptime_s: Any, server_no
         return
 
     elapsed_since_measurement = max(0.0, current_uptime - measurement_uptime)
-    item['timestamp'] = _iso_utc(server_now - timedelta(seconds=elapsed_since_measurement))
+    estimated = server_now - timedelta(seconds=elapsed_since_measurement)
+    if estimated > server_now:
+        estimated = server_now
+    item['timestamp'] = _iso_local(estimated)
 
 
 def display_host(host: str) -> str:
@@ -70,15 +82,31 @@ async def sync_latest_measurements() -> dict[str, Any] | None:
         missing = await fetch_readings_since(host_now, last_id)
         missing_data = missing.get('data') if missing.get('ok') else None
         if isinstance(missing_data, dict) and isinstance(missing_data.get('rows'), list):
-            server_now = datetime.now(timezone.utc)
+            server_now = datetime.now().astimezone()
             current_uptime_s = missing_data.get('current_uptime_s')
+            current_boot_id = missing_data.get('boot_id')
+            last_estimated: datetime | None = None
             for item in missing_data['rows']:
                 if isinstance(item, dict):
                     source_id = item.get('measurement_id') or item.get('id')
                     item['device_id'] = item.get('device_id') or display_host(host_now)
                     item['id'] = item.get('device_id')
                     item['measurement_id'] = source_id
-                    _enrich_time_metadata(item, current_uptime_s, server_now)
+                    _enrich_time_metadata(item, current_uptime_s, server_now, current_boot_id)
+                    if not item.get('timestamp'):
+                        window_s = item.get('window_s') or 300
+                        try:
+                            step = max(1, int(window_s))
+                        except (TypeError, ValueError):
+                            step = 300
+                        if last_estimated is None:
+                            last_estimated = server_now - timedelta(seconds=step * max(1, len(missing_data['rows'])))
+                        else:
+                            last_estimated = last_estimated + timedelta(seconds=step)
+                        if last_estimated > server_now:
+                            last_estimated = server_now
+                        item['timestamp'] = _iso_local(last_estimated)
+                        item['time_source'] = 'estimated_sequence'
                     await asyncio.to_thread(save_measurement, host_now, item)
 
         lecturas = await fetch_json(endpoints_now['lecturas'])
@@ -86,7 +114,7 @@ async def sync_latest_measurements() -> dict[str, Any] | None:
         if isinstance(data, dict) and data.get('valid'):
             row = row_from_payload(data)
             if row:
-                _enrich_time_metadata(row, data.get('current_uptime_s'), datetime.now(timezone.utc))
+                _enrich_time_metadata(row, data.get('current_uptime_s'), datetime.now().astimezone(), data.get('boot_id'))
                 await asyncio.to_thread(save_measurement, host_now, row)
 
     if not row:

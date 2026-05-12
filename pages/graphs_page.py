@@ -779,7 +779,6 @@ def history_graph() -> None:
     ui.page_title('Gráficas del Historial')
     add_styles()
     _add_graph_styles()
-    ui.add_body_html(_history_slider_script())
 
     frame_cache: Any | None = None
     current_labels: list[str] = []
@@ -821,7 +820,8 @@ def history_graph() -> None:
 
         with ui.column().classes('history-slider-box'):
             ui.label('Seleccione el rango del historial').classes('history-select-label')
-            slider_html = ui.html(_history_slider_html([])).classes('w-full')
+            range_label = ui.label('Sin registros para seleccionar').classes('status-line')
+            range_slider = ui.range(min=0, max=0, value={'min': 0, 'max': 0}).props('label-always snap').classes('w-full')
 
         chart = ui.plotly({}).classes('w-full chart-card')
         table = ui.html('').classes('w-full')
@@ -870,7 +870,12 @@ def history_graph() -> None:
         max_idx = max(0, len(current_labels) - 1)
         range_start = 0
         range_end = max_idx
-        slider_html.set_content(_history_slider_html(current_labels, range_start, range_end))
+        range_slider.props(f'min=0 max={max_idx} step=1 label-always snap')
+        range_slider.set_value({'min': range_start, 'max': range_end})
+        if current_labels:
+            range_label.set_text(f'{current_labels[range_start]}  →  {current_labels[range_end]}')
+        else:
+            range_label.set_text('Sin registros para seleccionar')
         update_interval_buttons()
         await redraw()
 
@@ -914,19 +919,15 @@ def history_graph() -> None:
 
     async def on_history_range_change(e) -> None:
         nonlocal range_start, range_end
-        args = getattr(e, 'args', None)
-        if isinstance(args, dict):
-            range_start = int(args.get('start', range_start))
-            range_end = int(args.get('end', range_end))
-        elif isinstance(args, (list, tuple)) and len(args) >= 2:
-            range_start = int(args[0])
-            range_end = int(args[1])
+        value = getattr(e, 'value', None)
+        if isinstance(value, dict):
+            range_start = int(value.get('min', range_start))
+            range_end = int(value.get('max', range_end))
+        start, end = slider_bounds()
+        if current_labels:
+            range_label.set_text(f'{current_labels[start]}  →  {current_labels[end]}')
         await redraw()
 
     selector.on('update:model-value', lambda: ui.timer(0.1, rebuild, once=True))
-    slider_html.on(
-        'history-range-change',
-        on_history_range_change,
-        args=['event.detail.start', 'event.detail.end'],
-    )
+    range_slider.on_value_change(on_history_range_change)
     ui.timer(0.1, load_history, once=True)

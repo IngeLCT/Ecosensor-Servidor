@@ -1,7 +1,7 @@
 import csv
 import io
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from config import DATA_DIR, MEASUREMENTS_DB_FILE
@@ -186,6 +186,7 @@ def _graph_row(row: sqlite3.Row) -> dict[str, Any]:
 
 def graph_latest_row() -> dict[str, Any] | None:
     ensure_db()
+    repair_future_estimated_timestamps()
     with sqlite3.connect(MEASUREMENTS_DB_FILE) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
@@ -203,6 +204,7 @@ def graph_latest_row() -> dict[str, Any] | None:
 
 def graph_rows_history(limit: int = 5000) -> list[dict[str, Any]]:
     ensure_db()
+    repair_future_estimated_timestamps()
     limit = max(1, min(20000, int(limit)))
     with sqlite3.connect(MEASUREMENTS_DB_FILE) as conn:
         conn.row_factory = sqlite3.Row
@@ -228,6 +230,7 @@ def graph_rows_history(limit: int = 5000) -> list[dict[str, Any]]:
 
 def graph_rows_all() -> list[dict[str, Any]]:
     ensure_db()
+    repair_future_estimated_timestamps()
     with sqlite3.connect(MEASUREMENTS_DB_FILE) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
@@ -244,6 +247,7 @@ def graph_rows_all() -> list[dict[str, Any]]:
 
 def graph_rows_since(row_id: int, limit: int = 500) -> list[dict[str, Any]]:
     ensure_db()
+    repair_future_estimated_timestamps()
     row_id = max(0, int(row_id))
     limit = max(1, min(20000, int(limit)))
     with sqlite3.connect(MEASUREMENTS_DB_FILE) as conn:
@@ -263,8 +267,54 @@ def graph_rows_since(row_id: int, limit: int = 500) -> list[dict[str, Any]]:
     return [_graph_row(row) for row in rows]
 
 
+def repair_future_estimated_timestamps() -> int:
+    """Corrige timestamps estimados guardados en UTC como si fueran hora local.
+
+    Si el servidor corre en zona horaria local distinta de UTC, una estimación vieja pudo
+    quedar adelantada varias horas. Solo toca filas estimadas/no confiables en el futuro.
+    """
+    ensure_db()
+    offset = datetime.now().astimezone().utcoffset() or timedelta(0)
+    if offset == timedelta(0):
+        return 0
+
+    now_local = datetime.now().replace(tzinfo=None)
+    max_allowed = now_local + timedelta(minutes=10)
+    repaired = 0
+    with sqlite3.connect(MEASUREMENTS_DB_FILE) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            '''
+            SELECT id, device_timestamp
+            FROM measurements
+            WHERE device_timestamp IS NOT NULL AND device_timestamp != ''
+              AND COALESCE(time_source, '') != 'esp'
+            '''
+        ).fetchall()
+        for row in rows:
+            try:
+                ts = datetime.fromisoformat(str(row['device_timestamp']).replace('Z', ''))
+            except ValueError:
+                continue
+            if ts.tzinfo is not None:
+                ts = ts.astimezone().replace(tzinfo=None)
+            if ts <= max_allowed:
+                continue
+            corrected = ts + offset
+            if corrected > max_allowed:
+                continue
+            conn.execute(
+                'UPDATE measurements SET device_timestamp = ?, time_source = ? WHERE id = ?',
+                (corrected.isoformat(timespec='seconds'), 'estimated_repaired', row['id']),
+            )
+            repaired += 1
+        conn.commit()
+    return repaired
+
+
 def measurements_csv_text() -> str:
     ensure_db()
+    repair_future_estimated_timestamps()
     output = io.StringIO()
     fieldnames = [
         'id', 'device_id', 'Fecha de medicion', 'Hora de medicion',
@@ -356,5 +406,32 @@ def save_measurement(host: str, row: dict[str, Any]) -> bool:
             ''',
             values,
         )
+        inserted = cursor.rowcount > 0
+        if not inserted and source_id is not None and device_timestamp:
+            conn.execute(
+                '''
+                UPDATE measurements
+                SET host = :host,
+                    device_timestamp = :device_timestamp,
+                    received_at = :received_at,
+                    boot_id = COALESCE(:boot_id, boot_id),
+                    uptime_s = COALESCE(:uptime_s, uptime_s),
+                    time_valid = COALESCE(:time_valid, time_valid),
+                    time_source = COALESCE(:time_source, time_source),
+                    pm1p0 = COALESCE(:pm1p0, pm1p0),
+                    pm2p5 = COALESCE(:pm2p5, pm2p5),
+                    pm4p0 = COALESCE(:pm4p0, pm4p0),
+                    pm10p0 = COALESCE(:pm10p0, pm10p0),
+                    voc = COALESCE(:voc, voc),
+                    nox = COALESCE(:nox, nox),
+                    co2 = COALESCE(:co2, co2),
+                    temp = COALESCE(:temp, temp),
+                    hum = COALESCE(:hum, hum),
+                    window_s = COALESCE(:window_s, window_s)
+                WHERE device_id = :device_id AND source_id = :source_id
+                  AND COALESCE(time_source, '') != 'esp'
+                ''',
+                values,
+            )
         conn.commit()
-        return cursor.rowcount > 0
+        return inserted
