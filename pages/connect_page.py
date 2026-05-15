@@ -1,7 +1,7 @@
 from fastapi import Request
 from nicegui import ui
 
-from services.device_registry import device_id_from_host, remember_host
+from services.device_registry import device_id_from_host, probe_host, remember_host
 from services.esp_client import build_endpoints, delete_json, normalize_host_input, sync_time_if_needed
 from shared.formatters import device_display_name
 from shared.styles import add_styles
@@ -62,17 +62,20 @@ def config_page(request: Request) -> None:
             ui.notify('Escribe la IP o mDNS del ESP32', color='negative')
             return
 
-        result = await sync_time_if_needed(host)
-        if not result.get('ok'):
-            ui.notify('No se pudo conectar/sincronizar el ESP32. Revisa IP/mDNS y red.', color='negative')
+        detected = await probe_host(host, timeout=1.5)
+        if not detected:
+            ui.notify('No se pudo conectar al ESP32. Revisa IP/mDNS y red.', color='negative')
             return
 
+        result = await sync_time_if_needed(str(detected.get('host') or host), timeout=3.0)
         if result.get('synced'):
             ui.notify('ESP32 conectado y fecha/hora sincronizada.', color='positive')
-        else:
+        elif result.get('ok'):
             ui.notify('ESP32 conectado con fecha/hora válida.', color='positive')
+        else:
+            ui.notify('ESP32 conectado; la hora no se pudo sincronizar, pero se guardó para mediciones.', color='warning')
 
-        remember_host(host)
+        remember_host(str(detected.get('host') or host), str(detected.get('device_id') or device_id_from_host(host)))
         ui.navigate.to('/dashboard')
 
     async def clear_wifi() -> None:
@@ -114,7 +117,9 @@ def config_page(request: Request) -> None:
                     if not result.get('ok'):
                         ui.notify(f'No se pudo borrar CSV del ESP32: {result.get("data")}', color='negative')
                         return
-                    deleted = clear_measurements(device_id_from_host(host))
+                    detected = await probe_host(host, timeout=1.5)
+                    target_device_id = str((detected or {}).get('device_id') or device_id_from_host(host))
+                    deleted = clear_measurements(target_device_id)
                     ui.notify(f'Historial borrado. Filas locales eliminadas: {deleted}.', color='positive')
 
                 ui.button('Borrar historial', on_click=confirm).props('unelevated color=negative')

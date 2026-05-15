@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse, Response
 from nicegui import app, ui
 
 from config import STATIC_DIR, UI_HOST, UI_PORT
+from services.device_registry import active_devices, probe_failures
 from services.measurement_sync import background_sync_loop
 from services.mdns_service import start_mdns_service
 from storage.measurements_store import graph_latest_row, graph_rows_history, graph_rows_since, measurements_csv_text
@@ -33,6 +34,11 @@ def _start_background_sync() -> None:
 
 
 app.on_startup(_start_background_sync)
+
+
+@app.get('/api/devices')
+def devices_status() -> JSONResponse:
+    return JSONResponse({'ok': True, 'active': active_devices(), 'failures': probe_failures()})
 
 
 @app.get('/api/measurements.csv')

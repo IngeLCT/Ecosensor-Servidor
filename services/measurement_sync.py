@@ -85,17 +85,18 @@ async def sync_sensor_measurements(device_id: str | None = None) -> dict[str, An
     host_now = str(active['host'])
 
     async with _lock_for(selected_device_id):
-        connection = await sync_time_if_needed(host_now)
-        if not connection.get('ok'):
-            return await asyncio.to_thread(get_latest_measurement, selected_device_id)
+        # La sincronización de hora es útil, pero no debe bloquear la lectura de
+        # mediciones: el ESP32 puede estar activo y con datos aunque /time falle.
+        connection = await sync_time_if_needed(host_now, timeout=2.0)
+        if connection.get('ok'):
+            host_now = str(connection.get('host') or host_now)
 
-        host_now = str(connection.get('host') or host_now)
         endpoints_now = build_endpoints(host_now)
         row = None
 
         if endpoints_now['lecturas']:
             last_id = await asyncio.to_thread(latest_source_id, selected_device_id)
-            missing = await fetch_readings_since(host_now, last_id)
+            missing = await fetch_readings_since(host_now, last_id, timeout=5.0)
             missing_data = missing.get('data') if missing.get('ok') else None
             if isinstance(missing_data, dict) and isinstance(missing_data.get('rows'), list):
                 server_now = datetime.now().astimezone()
@@ -125,7 +126,7 @@ async def sync_sensor_measurements(device_id: str | None = None) -> dict[str, An
                             item['time_source'] = 'estimated_sequence'
                         await asyncio.to_thread(save_measurement, host_now, item)
 
-            lecturas = await fetch_json(endpoints_now['lecturas'])
+            lecturas = await fetch_json(endpoints_now['lecturas'], timeout=4.0)
             data = lecturas.get('data') if lecturas.get('ok') else None
             if isinstance(data, dict) and data.get('valid'):
                 row = row_from_payload(data)

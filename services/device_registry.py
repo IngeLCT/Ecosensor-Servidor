@@ -1,18 +1,134 @@
 import asyncio
+import ipaddress
 import re
+import socket
+import subprocess
 from datetime import datetime, timedelta
+from time import perf_counter
 from typing import Any
 
 from config import DEFAULT_ESP_HOST, DEVICE_ID
-from services.esp_client import normalize_host_input, sync_time_if_needed_sync
+from services.esp_client import build_endpoints, fetch_json_sync, normalize_host_input
 from storage.settings_store import load_settings, save_settings
 
-ACTIVE_TTL_SECONDS = 180
+# Un EcoSensor no debe desaparecer por un fallo puntual de mDNS/red.
+ACTIVE_TTL_SECONDS = 300
 DISCOVERY_MAX_DEVICE_NUMBER = 12
+DISCOVERY_REFRESH_INTERVAL_SECONDS = 20
+CONFIGURED_PROBE_TIMEOUT_SECONDS = 0.7
+DISCOVERY_PROBE_TIMEOUT_SECONDS = 0.8
+DISCOVERY_CONCURRENCY = 64
+LAN_SCAN_ENABLED = True
+LAN_SCAN_TIMEOUT_SECONDS = 0.25
 _DEVICE_RE = re.compile(r'^(ecosensor\d+)(?:\.local)?(?::\d+)?$', re.IGNORECASE)
 
 _active_devices: dict[str, dict[str, Any]] = {}
+_probe_failures: dict[str, dict[str, Any]] = {}
 _probe_lock = asyncio.Lock()
+_refresh_task: asyncio.Task | None = None
+_last_refresh_at: datetime | None = None
+
+
+def _now_iso() -> str:
+    return datetime.now().isoformat(timespec='seconds')
+
+
+def _host_port(value: str) -> tuple[str, int]:
+    clean = normalize_host_input(value)
+    if ':' not in clean:
+        return clean, 80
+    host, raw_port = clean.rsplit(':', 1)
+    try:
+        port = int(raw_port)
+    except ValueError:
+        return clean, 80
+    return host, port
+
+
+def _is_valid_ip(value: str) -> bool:
+    host, _ = _host_port(value)
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return not ip.is_unspecified
+
+
+def _tcp_port_open_sync(host: str, timeout: float) -> bool:
+    target, port = _host_port(host)
+    try:
+        with socket.create_connection((target, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+async def _tcp_port_open(host: str, timeout: float) -> bool:
+    return await asyncio.to_thread(_tcp_port_open_sync, host, timeout)
+
+
+def _resolve_host_quick_sync(host: str, timeout: float = 0.4) -> str | None:
+    target, _ = _host_port(host)
+    if _is_valid_ip(target):
+        return target
+    try:
+        result = subprocess.run(
+            ['getent', 'hosts', target],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if parts and _is_valid_ip(parts[0]):
+            return parts[0]
+    return None
+
+
+async def _resolve_host_quick(host: str, timeout: float = 0.4) -> str | None:
+    return await asyncio.to_thread(_resolve_host_quick_sync, host, timeout)
+
+
+async def _async_tcp_port_open(host: str, timeout: float) -> bool:
+    target, port = _host_port(host)
+    try:
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(target, port), timeout=timeout)
+        writer.close()
+        await writer.wait_closed()
+        return True
+    except (OSError, asyncio.TimeoutError):
+        return False
+
+
+async def _scan_http_hosts(hosts: list[str], timeout: float) -> list[str]:
+    semaphore = asyncio.Semaphore(128)
+
+    async def check(host: str) -> str | None:
+        async with semaphore:
+            return host if await _async_tcp_port_open(host, timeout) else None
+
+    found = await asyncio.gather(*(check(host) for host in hosts))
+    return [host for host in found if host]
+
+
+def _status_device_id(status_data: dict[str, Any] | None) -> str | None:
+    if not isinstance(status_data, dict):
+        return None
+    raw = status_data.get('device_id') or status_data.get('id')
+    if raw is None:
+        return None
+    value = str(raw).strip().lower()
+    return value or None
+
+
+def _status_ip(status_data: dict[str, Any] | None) -> str | None:
+    if not isinstance(status_data, dict):
+        return None
+    raw = str(status_data.get('ip') or '').strip()
+    return raw if _is_valid_ip(raw) else None
 
 
 def device_id_from_host(host: str) -> str:
@@ -28,9 +144,25 @@ def device_id_from_host(host: str) -> str:
     return base.lower() or DEVICE_ID
 
 
+def _settings_device_hosts(settings: dict[str, Any]) -> dict[str, str]:
+    raw = settings.get('device_hosts')
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key, value in raw.items():
+        device_id = str(key or '').strip().lower()
+        host = normalize_host_input(str(value or ''))
+        if device_id and host:
+            out[device_id] = host
+    return out
+
+
 def host_for_device(device_id: str) -> str:
     device_id = (device_id or DEVICE_ID).strip().lower()
     settings = load_settings()
+    device_hosts = _settings_device_hosts(settings)
+    if device_hosts.get(device_id):
+        return device_hosts[device_id]
     for host in configured_hosts():
         if device_id_from_host(host) == device_id:
             return host
@@ -40,6 +172,12 @@ def host_for_device(device_id: str) -> str:
 def configured_hosts() -> list[str]:
     settings = load_settings()
     hosts: list[str] = []
+
+    # Primero IP/host conocido por device_id: es lo más rápido y evita depender de mDNS.
+    for host in _settings_device_hosts(settings).values():
+        if host and host not in hosts:
+            hosts.append(host)
+
     raw_hosts = settings.get('esp_hosts')
     if isinstance(raw_hosts, list):
         for item in raw_hosts:
@@ -55,16 +193,81 @@ def configured_hosts() -> list[str]:
     return hosts
 
 
+def _local_ipv4_addresses() -> list[str]:
+    addresses: list[str] = []
+
+    # Método stdlib: detecta la IP local usada para salir a la red.
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.settimeout(0.2)
+            sock.connect(('8.8.8.8', 80))
+            ip = sock.getsockname()[0]
+            if ip and ip not in addresses:
+                addresses.append(ip)
+    except OSError:
+        pass
+
+    # Método Linux: recoge todas las IPv4 activas por si hay varias interfaces.
+    try:
+        result = subprocess.run(
+            ['ip', '-o', '-4', 'addr', 'show', 'scope', 'global'],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+        )
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) < 4 or 'inet' not in parts:
+                continue
+            interface = parts[1]
+            if interface.startswith(('docker', 'br-', 'veth', 'tailscale', 'tun', 'wg')):
+                continue
+            cidr = parts[parts.index('inet') + 1]
+            ip = cidr.split('/', 1)[0]
+            if ip and ip not in addresses:
+                addresses.append(ip)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+    return addresses
+
+
+def _local_subnet_hosts() -> list[str]:
+    if not LAN_SCAN_ENABLED:
+        return []
+
+    hosts: list[str] = []
+    for local_ip in _local_ipv4_addresses():
+        try:
+            address = ipaddress.ip_address(local_ip)
+        except ValueError:
+            continue
+        if not address.is_private:
+            continue
+        network = ipaddress.ip_network(f'{local_ip}/24', strict=False)
+        for candidate in network.hosts():
+            candidate_text = str(candidate)
+            if candidate_text == local_ip:
+                continue
+            if candidate_text not in hosts:
+                hosts.append(candidate_text)
+    return hosts
+
+
 def discovery_hosts() -> list[str]:
     hosts = configured_hosts()
     for number in range(1, DISCOVERY_MAX_DEVICE_NUMBER + 1):
         host = f'ecosensor{number:02d}.local'
         if host not in hosts:
             hosts.append(host)
+    for host in _local_subnet_hosts():
+        if host not in hosts:
+            hosts.append(host)
     return hosts
 
 
-def remember_host(host: str) -> None:
+def remember_host(host: str, device_id: str | None = None) -> None:
     host = normalize_host_input(host)
     if not host:
         return
@@ -79,24 +282,40 @@ def remember_host(host: str) -> None:
         hosts.append(legacy)
     if host not in hosts:
         hosts.append(host)
+
+    resolved_device_id = (device_id or device_id_from_host(host) or DEVICE_ID).strip().lower()
+    device_hosts = _settings_device_hosts(settings)
+    device_hosts[resolved_device_id] = host
+
     settings['esp_host'] = host
     settings['esp_hosts'] = hosts
-    settings['device_id'] = device_id_from_host(host)
+    settings['device_hosts'] = device_hosts
+    settings['device_id'] = resolved_device_id
     save_settings(settings)
 
 
-def _mark_active(host: str, status_data: dict[str, Any] | None = None) -> dict[str, Any]:
+def _mark_active(host: str, status_data: dict[str, Any] | None = None, device_id: str | None = None, latency_ms: int | None = None) -> dict[str, Any]:
     host = normalize_host_input(host)
-    device_id = device_id_from_host(host)
+    resolved_device_id = (device_id or _status_device_id(status_data) or device_id_from_host(host) or DEVICE_ID).strip().lower()
     entry = {
-        'device_id': device_id,
+        'device_id': resolved_device_id,
         'host': host,
-        'label': device_id,
-        'last_seen': datetime.now().isoformat(timespec='seconds'),
+        'label': resolved_device_id,
+        'last_seen': _now_iso(),
+        'latency_ms': latency_ms,
         'status': status_data or {},
     }
-    _active_devices[device_id] = entry
+    _active_devices[resolved_device_id] = entry
+    _probe_failures.pop(host, None)
     return entry
+
+
+def _mark_probe_failure(host: str, error: Any) -> None:
+    _probe_failures[host] = {
+        'host': host,
+        'last_probe': _now_iso(),
+        'error': str(error or 'sin respuesta'),
+    }
 
 
 def _prune_expired() -> None:
@@ -123,28 +342,84 @@ def active_device_options() -> dict[str, str]:
     return {item['device_id']: item['label'] for item in active_devices()}
 
 
-async def probe_host(host: str) -> dict[str, Any] | None:
+def probe_failures() -> list[dict[str, Any]]:
+    return sorted(_probe_failures.values(), key=lambda item: item.get('host') or '')
+
+
+def _refresh_is_stale() -> bool:
+    if _last_refresh_at is None:
+        return True
+    return datetime.now() - _last_refresh_at > timedelta(seconds=DISCOVERY_REFRESH_INTERVAL_SECONDS)
+
+
+def _schedule_refresh() -> None:
+    global _refresh_task
+    if _refresh_task is None or _refresh_task.done():
+        _refresh_task = asyncio.create_task(refresh_active_devices())
+
+
+async def probe_host(host: str, timeout: float = CONFIGURED_PROBE_TIMEOUT_SECONDS) -> dict[str, Any] | None:
+    """Detección rápida: un sensor está activo si responde /status.
+
+    La sincronización de hora no se usa como prueba de vida porque puede fallar
+    aunque el ESP32 esté encendido y publicando lecturas.
+    """
     host = normalize_host_input(host)
     if not host:
         return None
-    result = await asyncio.to_thread(sync_time_if_needed_sync, host, 0.8)
-    if not result.get('ok'):
+
+    request_host = host
+    if not _is_valid_ip(host):
+        resolved_ip = await _resolve_host_quick(host)
+        if resolved_ip:
+            request_host = resolved_ip
+        elif host.endswith('.local'):
+            _mark_probe_failure(host, 'mDNS no resolvió el nombre')
+            return None
+
+    if _is_valid_ip(request_host) and not await _tcp_port_open(request_host, timeout):
+        _mark_probe_failure(host, 'puerto 80 cerrado o sin respuesta')
         return None
-    status = result.get('status', {}).get('data')
-    entry = _mark_active(str(result.get('host') or host), status if isinstance(status, dict) else None)
-    remember_host(entry['host'])
+
+    started = perf_counter()
+    status = await asyncio.to_thread(fetch_json_sync, build_endpoints(request_host)['status'], timeout)
+    latency_ms = int((perf_counter() - started) * 1000)
+    status_data = status.get('data') if status.get('ok') else None
+    if not status.get('ok') or not isinstance(status_data, dict):
+        _mark_probe_failure(host, status.get('data'))
+        return None
+
+    resolved_device_id = _status_device_id(status_data) or device_id_from_host(host)
+    reachable_host = _status_ip(status_data) or request_host
+    entry = _mark_active(reachable_host, status_data, resolved_device_id, latency_ms)
+    remember_host(reachable_host, entry['device_id'])
     return entry
 
 
 async def refresh_active_devices() -> list[dict[str, Any]]:
+    global _last_refresh_at
     async with _probe_lock:
-        semaphore = asyncio.Semaphore(4)
+        configured = configured_hosts()
+        configured_set = set(configured)
+        direct_hosts: list[str] = []
+        lan_candidates: list[str] = []
+        for host in discovery_hosts():
+            if _is_valid_ip(host) and host not in configured_set:
+                lan_candidates.append(host)
+            else:
+                direct_hosts.append(host)
+
+        open_lan_hosts = await _scan_http_hosts(lan_candidates, LAN_SCAN_TIMEOUT_SECONDS)
+        all_hosts = direct_hosts + [host for host in open_lan_hosts if host not in direct_hosts]
+        semaphore = asyncio.Semaphore(DISCOVERY_CONCURRENCY)
 
         async def limited_probe(host: str) -> None:
+            timeout = CONFIGURED_PROBE_TIMEOUT_SECONDS if host in configured_set else DISCOVERY_PROBE_TIMEOUT_SECONDS
             async with semaphore:
-                await probe_host(host)
+                await probe_host(host, timeout=timeout)
 
-        await asyncio.gather(*(limited_probe(host) for host in discovery_hosts()))
+        await asyncio.gather(*(limited_probe(host) for host in all_hosts))
+        _last_refresh_at = datetime.now()
         _prune_expired()
         return active_devices()
 
@@ -152,6 +427,8 @@ async def refresh_active_devices() -> list[dict[str, Any]]:
 async def ensure_active_devices() -> list[dict[str, Any]]:
     devices = active_devices()
     if devices:
+        if _refresh_is_stale():
+            _schedule_refresh()
         return devices
     return await refresh_active_devices()
 

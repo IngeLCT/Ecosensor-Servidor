@@ -80,16 +80,16 @@ def request_json_sync(request: Request, url: str, timeout: float = 8.0) -> dict[
         return {'ok': False, 'status': 0, 'url': url, 'data': str(exc)}
 
 
-async def fetch_json(url: str) -> dict[str, Any]:
-    return await asyncio.to_thread(fetch_json_sync, url)
+async def fetch_json(url: str, timeout: float = 8.0) -> dict[str, Any]:
+    return await asyncio.to_thread(fetch_json_sync, url, timeout)
 
 
-async def post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
-    return await asyncio.to_thread(post_json_sync, url, payload)
+async def post_json(url: str, payload: dict[str, Any], timeout: float = 8.0) -> dict[str, Any]:
+    return await asyncio.to_thread(post_json_sync, url, payload, timeout)
 
 
-async def delete_json(url: str) -> dict[str, Any]:
-    return await asyncio.to_thread(delete_json_sync, url)
+async def delete_json(url: str, timeout: float = 8.0) -> dict[str, Any]:
+    return await asyncio.to_thread(delete_json_sync, url, timeout)
 
 
 def candidate_hosts(saved_host: str, default_host: str) -> list[str]:
@@ -122,16 +122,16 @@ def sync_time_if_needed_sync(host: str, timeout: float = 4.0) -> dict[str, Any]:
     return {'ok': synced, 'host': host, 'status': status, 'sync': sync_response, 'synced': synced}
 
 
-async def sync_time_if_needed(host: str) -> dict[str, Any]:
-    return await asyncio.to_thread(sync_time_if_needed_sync, host)
+async def sync_time_if_needed(host: str, timeout: float = 4.0) -> dict[str, Any]:
+    return await asyncio.to_thread(sync_time_if_needed_sync, host, timeout)
 
 
-async def fetch_readings_since(host: str, after_id: int, limit: int = 500) -> dict[str, Any]:
+async def fetch_readings_since(host: str, after_id: int, limit: int = 500, timeout: float = 6.0) -> dict[str, Any]:
     endpoints = build_endpoints(host)
     if not endpoints['lecturas_since']:
         return {'ok': False, 'status': 0, 'url': '', 'data': 'missing host'}
     query = urlencode({'after': max(0, int(after_id)), 'limit': max(1, int(limit))})
-    return await fetch_json(f"{endpoints['lecturas_since']}?{query}")
+    return await fetch_json(f"{endpoints['lecturas_since']}?{query}", timeout=timeout)
 
 
 async def autoconnect_and_sync(saved_host: str, default_host: str) -> dict[str, Any]:

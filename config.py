@@ -18,5 +18,6 @@ DEFAULT_ESP_HOST = f'{DEVICE_ID}.local'
 DEFAULT_SETTINGS = {
     'esp_host': DEFAULT_ESP_HOST,
     'esp_hosts': [DEFAULT_ESP_HOST],
+    'device_hosts': {DEVICE_ID: DEFAULT_ESP_HOST},
     'device_id': DEVICE_ID,
 }

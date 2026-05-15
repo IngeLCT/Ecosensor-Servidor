@@ -2,7 +2,7 @@ from typing import Any
 
 from nicegui import app, ui
 
-from services.device_registry import active_device_options, ensure_active_devices
+from services.device_registry import active_device_options, ensure_active_devices, probe_failures
 from services.measurement_sync import sync_sensor_measurements
 from shared.formatters import format_value
 from shared.styles import add_styles
@@ -132,7 +132,12 @@ def dashboard() -> None:
             render_table(None)
             date_info.set_content('')
             time_info.set_content('')
-            connection_info.set_text('No hay EcoSensor activos disponibles.')
+            failures = probe_failures()
+            if failures:
+                sample = '; '.join(f"{item.get('host')}: {item.get('error')}" for item in failures[:3])
+                connection_info.set_text(f'No hay EcoSensor activos disponibles. Últimos intentos: {sample}')
+            else:
+                connection_info.set_text('No hay EcoSensor activos disponibles.')
             return
 
         row = await sync_sensor_measurements(selected_device_id)
