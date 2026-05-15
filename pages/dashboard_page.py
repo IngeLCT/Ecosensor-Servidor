@@ -36,7 +36,7 @@ def dashboard() -> None:
         ui.label('Mediciones Ambientales').classes('section-title')
         with ui.row().classes('items-center justify-center gap-3 history-controls'):
             ui.label('ID:').classes('section-title')
-            sensor_select = ui.select({}, value=None).props('outlined dense').classes('w-64')
+            sensor_select = ui.select({}, value=None).props('outlined dense').classes('w-64 device-select')
 
         pollutants_info_card()
 

@@ -99,6 +99,26 @@ def add_styles() -> None:
             font-weight: 700;
             text-decoration: underline;
         }
+        .device-select .q-field__control {
+            min-height: 48px;
+            background: rgba(255, 255, 255, .72);
+            border-radius: 8px;
+        }
+        .device-select .q-field__native,
+        .device-select .q-field__input,
+        .device-select .q-field__append,
+        .device-select .q-select__dropdown-icon {
+            color: rgb(4, 4, 52) !important;
+            font-size: 24px;
+            font-weight: 700;
+            font-family: "Arial Narrow", Arial, sans-serif;
+        }
+        .device-select .q-field__native > span {
+            color: rgb(4, 4, 52) !important;
+            font-size: 24px;
+            font-weight: 700;
+            text-decoration: underline;
+        }
         .pollutant-card {
             background: rgba(255, 255, 255, .52);
             border: 1px solid rgba(0, 0, 0, .12);
