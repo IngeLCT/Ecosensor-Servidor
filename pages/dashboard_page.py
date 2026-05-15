@@ -134,8 +134,12 @@ def dashboard() -> None:
             time_info.set_content('')
             failures = probe_failures()
             if failures:
-                sample = '; '.join(f"{item.get('host')}: {item.get('error')}" for item in failures[:3])
-                connection_info.set_text(f'No hay EcoSensor activos disponibles. Últimos intentos: {sample}')
+                mdns = [item for item in failures if str(item.get('host', '')).endswith('.local')]
+                relevant = mdns[:2] or failures[:2]
+                sample = '; '.join(f"{item.get('host')}: {item.get('error')}" for item in relevant)
+                if len(failures) > len(relevant):
+                    sample = f'{sample}; otros intentos: {len(failures) - len(relevant)}'
+                connection_info.set_text(f'No hay EcoSensor activos disponibles. Diagnóstico: {sample}')
             else:
                 connection_info.set_text('No hay EcoSensor activos disponibles.')
             return

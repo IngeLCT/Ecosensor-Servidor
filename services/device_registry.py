@@ -310,11 +310,27 @@ def _mark_active(host: str, status_data: dict[str, Any] | None = None, device_id
     return entry
 
 
+def _summarize_probe_error(error: Any) -> str:
+    text = str(error or 'sin respuesta').strip()
+    lower = text.lower()
+    if '<html' in lower or '<!doctype html' in lower:
+        return 'responde HTTP, pero /status no es JSON de EcoSensor'
+    if 'name or service not known' in lower or 'temporary failure in name resolution' in lower:
+        return 'mDNS/DNS no resolvió el nombre'
+    if 'timed out' in lower or 'timeout' in lower:
+        return 'timeout de conexión'
+    if 'connection refused' in lower or 'errno 111' in lower:
+        return 'puerto 80 cerrado/rechazado'
+    if '404' in lower or 'not found' in lower:
+        return 'responde HTTP, pero no existe /status de EcoSensor'
+    return text[:160]
+
+
 def _mark_probe_failure(host: str, error: Any) -> None:
     _probe_failures[host] = {
         'host': host,
         'last_probe': _now_iso(),
-        'error': str(error or 'sin respuesta'),
+        'error': _summarize_probe_error(error),
     }
 
 
