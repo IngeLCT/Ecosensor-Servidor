@@ -168,6 +168,48 @@ def get_latest_measurement(device_id: str | None = None) -> dict[str, Any] | Non
     return _measurement_row_to_dict(row) if row else None
 
 
+def measurement_debug_summary(device_id: str | None = None) -> dict[str, Any]:
+    """Resumen interno para depurar sincronización sin mostrar datos en UI."""
+    ensure_db(device_id)
+    db_file = db_file_for_device(device_id)
+    safe_device_id = _safe_device_id(device_id)
+    with sqlite3.connect(db_file) as conn:
+        conn.row_factory = sqlite3.Row
+        count = conn.execute('SELECT COUNT(*) FROM measurements').fetchone()[0]
+        latest = conn.execute(
+            '''
+            SELECT id, device_id, host, device_timestamp, received_at, source_id,
+                   boot_id, uptime_s, time_valid, time_source,
+                   pm1p0, pm2p5, pm4p0, pm10p0,
+                   voc, nox, co2, temp, hum, window_s
+            FROM measurements
+            ORDER BY COALESCE(source_id, id) DESC, id DESC
+            LIMIT 1
+            '''
+        ).fetchone()
+        latest_received = conn.execute(
+            '''
+            SELECT id, device_id, host, device_timestamp, received_at, source_id,
+                   boot_id, uptime_s, time_valid, time_source
+            FROM measurements
+            ORDER BY received_at DESC, id DESC
+            LIMIT 1
+            '''
+        ).fetchone()
+        max_source_id = conn.execute(
+            'SELECT COALESCE(MAX(source_id), 0) FROM measurements WHERE device_id = ?',
+            (safe_device_id,),
+        ).fetchone()[0]
+
+    return {
+        'db_file': str(db_file),
+        'row_count': int(count or 0),
+        'latest_by_source_id': dict(latest) if latest else None,
+        'latest_by_received_at': dict(latest_received) if latest_received else None,
+        'max_source_id': int(max_source_id or 0),
+    }
+
+
 def latest_source_id(device_id: str = 'ecosensor01') -> int:
     ensure_db(device_id)
     with sqlite3.connect(db_file_for_device(device_id)) as conn:

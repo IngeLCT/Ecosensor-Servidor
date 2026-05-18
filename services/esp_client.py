@@ -38,6 +38,8 @@ def build_endpoints(host: str) -> dict[str, str]:
         'lecturas_since': f'{base_url}/lecturas/since' if base_url else '',
         'config': f'{base_url}/config' if base_url else '',
         'time': f'{base_url}/time' if base_url else '',
+        'diagnostics': f'{base_url}/diagnostics' if base_url else '',
+        'debug': f'{base_url}/debug' if base_url else '',
         'wifi_clear': f'{base_url}/wifi/clear' if base_url else '',
         'readings_clear': f'{base_url}/lecturas/clear' if base_url else '',
     }

@@ -15,7 +15,8 @@ from nicegui import app, ui
 
 from config import STATIC_DIR, UI_HOST, UI_PORT
 from services.device_registry import active_devices, probe_failures
-from services.measurement_sync import background_sync_loop
+from services.measurement_sync import background_sync_loop, debug_device_snapshot
+from services.sync_debug import sync_debug_snapshot
 from services.mdns_service import start_mdns_service
 from storage.measurements_store import graph_latest_row, graph_rows_history, graph_rows_since, measurements_csv_text
 import pages.connect_page  # registra / y /config
@@ -39,6 +40,16 @@ app.on_startup(_start_background_sync)
 @app.get('/api/devices')
 def devices_status() -> JSONResponse:
     return JSONResponse({'ok': True, 'active': active_devices(), 'failures': probe_failures()})
+
+
+@app.get('/api/debug/sync')
+def debug_sync_events(device_id: str | None = Query(default=None)) -> JSONResponse:
+    return JSONResponse(sync_debug_snapshot(device_id))
+
+
+@app.get('/api/debug/device')
+async def debug_device(device_id: str | None = Query(default=None)) -> JSONResponse:
+    return JSONResponse(await debug_device_snapshot(device_id))
 
 
 @app.get('/api/measurements.csv')

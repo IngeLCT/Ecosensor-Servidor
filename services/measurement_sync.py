@@ -12,8 +12,9 @@ from services.device_registry import (
     refresh_active_devices,
 )
 from services.esp_client import build_endpoints, fetch_json, fetch_readings_since, sync_time_if_needed
+from services.sync_debug import record_sync_event, summarize_response, sync_debug_snapshot
 from shared.formatters import row_from_payload
-from storage.measurements_store import get_latest_measurement, latest_source_id, save_measurement
+from storage.measurements_store import get_latest_measurement, latest_source_id, measurement_debug_summary, save_measurement
 
 _sync_locks: dict[str, asyncio.Lock] = {}
 
@@ -79,15 +80,34 @@ async def sync_sensor_measurements(device_id: str | None = None) -> dict[str, An
     active = await ensure_device_active(device_id)
     if not active:
         target_id = (device_id or DEVICE_ID).strip().lower() or DEVICE_ID
+        record_sync_event(target_id, 'inactive', reason='no_active_device')
         return await asyncio.to_thread(get_latest_measurement, target_id)
 
     selected_device_id = str(active['device_id'])
     host_now = str(active['host'])
 
     async with _lock_for(selected_device_id):
+        record_sync_event(
+            selected_device_id,
+            'start',
+            host=host_now,
+            last_seen=active.get('last_seen'),
+            status_time_valid=(active.get('status') or {}).get('time_valid'),
+            status_needs_time_sync=(active.get('status') or {}).get('needs_time_sync'),
+        )
+
         # La sincronización de hora es útil, pero no debe bloquear la lectura de
         # mediciones: el ESP32 puede estar activo y con datos aunque /time falle.
         connection = await sync_time_if_needed(host_now, timeout=2.0)
+        record_sync_event(
+            selected_device_id,
+            'time_sync',
+            host=host_now,
+            ok=bool(connection.get('ok')),
+            synced=bool(connection.get('synced')),
+            status=summarize_response(connection.get('status')),
+            sync=summarize_response(connection.get('sync')) if connection.get('sync') else None,
+        )
         if connection.get('ok'):
             host_now = str(connection.get('host') or host_now)
 
@@ -98,7 +118,10 @@ async def sync_sensor_measurements(device_id: str | None = None) -> dict[str, An
             last_id = await asyncio.to_thread(latest_source_id, selected_device_id)
             missing = await fetch_readings_since(host_now, last_id, timeout=5.0)
             missing_data = missing.get('data') if missing.get('ok') else None
+            inserted_count = 0
+            received_rows = 0
             if isinstance(missing_data, dict) and isinstance(missing_data.get('rows'), list):
+                received_rows = len(missing_data['rows'])
                 server_now = datetime.now().astimezone()
                 current_uptime_s = missing_data.get('current_uptime_s')
                 current_boot_id = missing_data.get('boot_id')
@@ -124,21 +147,52 @@ async def sync_sensor_measurements(device_id: str | None = None) -> dict[str, An
                                 last_estimated = server_now
                             item['timestamp'] = _iso_local(last_estimated)
                             item['time_source'] = 'estimated_sequence'
-                        await asyncio.to_thread(save_measurement, host_now, item)
+                        if await asyncio.to_thread(save_measurement, host_now, item):
+                            inserted_count += 1
+            record_sync_event(
+                selected_device_id,
+                'fetch_since',
+                host=host_now,
+                after_id=last_id,
+                ok=bool(missing.get('ok')),
+                rows=received_rows,
+                inserted=inserted_count,
+                response=summarize_response(missing),
+            )
 
             lecturas = await fetch_json(endpoints_now['lecturas'], timeout=4.0)
             data = lecturas.get('data') if lecturas.get('ok') else None
+            latest_inserted = False
             if isinstance(data, dict) and data.get('valid'):
                 row = row_from_payload(data)
                 if row:
                     row['device_id'] = selected_device_id
                     row['id'] = selected_device_id
                     _enrich_time_metadata(row, data.get('current_uptime_s'), datetime.now().astimezone(), data.get('boot_id'))
-                    await asyncio.to_thread(save_measurement, host_now, row)
+                    latest_inserted = await asyncio.to_thread(save_measurement, host_now, row)
+            record_sync_event(
+                selected_device_id,
+                'fetch_latest',
+                host=host_now,
+                ok=bool(lecturas.get('ok')),
+                valid=bool(isinstance(data, dict) and data.get('valid')),
+                inserted=latest_inserted,
+                response=summarize_response(lecturas),
+            )
 
         if not row:
             row = await asyncio.to_thread(get_latest_measurement, selected_device_id)
 
+        record_sync_event(
+            selected_device_id,
+            'done',
+            host=host_now,
+            latest_timestamp=(row or {}).get('timestamp'),
+            latest_received_at=(row or {}).get('received_at'),
+            latest_measurement_id=(row or {}).get('measurement_id'),
+            latest_time_valid=(row or {}).get('time_valid'),
+            latest_time_source=(row or {}).get('time_source'),
+        )
         return row
 
 
@@ -167,10 +221,47 @@ async def background_sync_loop(interval_seconds: float = 60.0) -> None:
     while True:
         try:
             await sync_all_active_measurements()
-        except Exception:
+        except Exception as exc:
+            record_sync_event('background', 'loop_error', error=str(exc)[:220])
             # El loop debe sobrevivir caídas puntuales de red/ESP32.
             pass
         await asyncio.sleep(interval_seconds)
+
+
+async def debug_device_snapshot(device_id: str | None = None) -> dict[str, Any]:
+    """Diagnóstico bajo demanda para consola/API; no modifica la UI."""
+    target_id = (device_id or DEVICE_ID).strip().lower() or DEVICE_ID
+    active = await ensure_device_active(target_id)
+    host = str((active or {}).get('host') or host_for_device(target_id))
+    endpoints = build_endpoints(host)
+    latest_source = await asyncio.to_thread(latest_source_id, target_id)
+
+    status = await fetch_json(endpoints['status'], timeout=3.0) if endpoints['status'] else {'ok': False, 'data': 'missing status endpoint'}
+    lecturas = await fetch_json(endpoints['lecturas'], timeout=4.0) if endpoints['lecturas'] else {'ok': False, 'data': 'missing lecturas endpoint'}
+    diagnostics = await fetch_json(endpoints['diagnostics'], timeout=4.0) if endpoints.get('diagnostics') else {'ok': False, 'data': 'missing diagnostics endpoint'}
+    since = await fetch_readings_since(host, latest_source, limit=20, timeout=5.0) if host else {'ok': False, 'data': 'missing host'}
+
+    since_data = since.get('data') if since.get('ok') else None
+    rows = since_data.get('rows') if isinstance(since_data, dict) else None
+
+    return {
+        'ok': True,
+        'device_id': target_id,
+        'host': host,
+        'active_entry': active,
+        'local_storage': await asyncio.to_thread(measurement_debug_summary, target_id),
+        'latest_local_source_id': latest_source,
+        'remote': {
+            'status': summarize_response(status),
+            'lecturas': summarize_response(lecturas),
+            'diagnostics': diagnostics.get('data') if diagnostics.get('ok') and isinstance(diagnostics.get('data'), dict) else summarize_response(diagnostics),
+            'lecturas_since': {
+                **summarize_response(since),
+                'rows_preview': rows[:3] if isinstance(rows, list) else None,
+            },
+        },
+        'sync_events': sync_debug_snapshot(target_id),
+    }
 
 
 def host_for_selected_device(device_id: str | None) -> str:
