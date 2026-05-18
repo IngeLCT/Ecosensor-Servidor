@@ -17,6 +17,8 @@ from shared.formatters import row_from_payload
 from storage.measurements_store import get_latest_measurement, latest_source_id, measurement_debug_summary, save_measurement
 
 _sync_locks: dict[str, asyncio.Lock] = {}
+SYNC_CHUNK_SIZE = 25
+SYNC_MAX_BATCHES_PER_CYCLE = 40
 
 
 def _lock_for(device_id: str) -> asyncio.Lock:
@@ -115,49 +117,106 @@ async def sync_sensor_measurements(device_id: str | None = None) -> dict[str, An
         row = None
 
         if endpoints_now['lecturas']:
+            total_inserted = 0
+            total_received = 0
+            batches = 0
+            completed_history_sync = False
             last_id = await asyncio.to_thread(latest_source_id, selected_device_id)
-            missing = await fetch_readings_since(host_now, last_id, timeout=5.0)
-            missing_data = missing.get('data') if missing.get('ok') else None
-            inserted_count = 0
-            received_rows = 0
-            if isinstance(missing_data, dict) and isinstance(missing_data.get('rows'), list):
-                received_rows = len(missing_data['rows'])
-                server_now = datetime.now().astimezone()
-                current_uptime_s = missing_data.get('current_uptime_s')
-                current_boot_id = missing_data.get('boot_id')
-                last_estimated: datetime | None = None
-                for item in missing_data['rows']:
-                    if isinstance(item, dict):
-                        source_id = item.get('measurement_id') or item.get('id')
-                        item['device_id'] = selected_device_id
-                        item['id'] = selected_device_id
-                        item['measurement_id'] = source_id
-                        _enrich_time_metadata(item, current_uptime_s, server_now, current_boot_id)
-                        if not item.get('timestamp'):
-                            window_s = item.get('window_s') or 300
+
+            for batch_index in range(1, SYNC_MAX_BATCHES_PER_CYCLE + 1):
+                batch_after_id = last_id
+                missing = await fetch_readings_since(
+                    host_now,
+                    batch_after_id,
+                    limit=SYNC_CHUNK_SIZE,
+                    timeout=5.0,
+                )
+                missing_data = missing.get('data') if missing.get('ok') else None
+                inserted_count = 0
+                received_rows = 0
+                max_seen_source_id = batch_after_id
+
+                if isinstance(missing_data, dict) and isinstance(missing_data.get('rows'), list):
+                    rows = missing_data['rows']
+                    received_rows = len(rows)
+                    total_received += received_rows
+                    server_now = datetime.now().astimezone()
+                    current_uptime_s = missing_data.get('current_uptime_s')
+                    current_boot_id = missing_data.get('boot_id')
+                    last_estimated: datetime | None = None
+                    for item in rows:
+                        if isinstance(item, dict):
+                            source_id = item.get('measurement_id') or item.get('id')
                             try:
-                                step = max(1, int(window_s))
+                                max_seen_source_id = max(max_seen_source_id, int(source_id or 0))
                             except (TypeError, ValueError):
-                                step = 300
-                            if last_estimated is None:
-                                last_estimated = server_now - timedelta(seconds=step * max(1, len(missing_data['rows'])))
-                            else:
-                                last_estimated = last_estimated + timedelta(seconds=step)
-                            if last_estimated > server_now:
-                                last_estimated = server_now
-                            item['timestamp'] = _iso_local(last_estimated)
-                            item['time_source'] = 'estimated_sequence'
-                        if await asyncio.to_thread(save_measurement, host_now, item):
-                            inserted_count += 1
+                                pass
+                            item['device_id'] = selected_device_id
+                            item['id'] = selected_device_id
+                            item['measurement_id'] = source_id
+                            _enrich_time_metadata(item, current_uptime_s, server_now, current_boot_id)
+                            if not item.get('timestamp'):
+                                window_s = item.get('window_s') or 300
+                                try:
+                                    step = max(1, int(window_s))
+                                except (TypeError, ValueError):
+                                    step = 300
+                                if last_estimated is None:
+                                    last_estimated = server_now - timedelta(seconds=step * max(1, len(rows)))
+                                else:
+                                    last_estimated = last_estimated + timedelta(seconds=step)
+                                if last_estimated > server_now:
+                                    last_estimated = server_now
+                                item['timestamp'] = _iso_local(last_estimated)
+                                item['time_source'] = 'estimated_sequence'
+                            if await asyncio.to_thread(save_measurement, host_now, item):
+                                inserted_count += 1
+                    total_inserted += inserted_count
+
+                batches = batch_index
+                record_sync_event(
+                    selected_device_id,
+                    'fetch_since_batch',
+                    host=host_now,
+                    batch=batch_index,
+                    after_id=batch_after_id,
+                    limit=SYNC_CHUNK_SIZE,
+                    ok=bool(missing.get('ok')),
+                    rows=received_rows,
+                    inserted=inserted_count,
+                    response=summarize_response(missing),
+                )
+
+                if not missing.get('ok'):
+                    break
+                if received_rows <= 0:
+                    completed_history_sync = True
+                    break
+                if max_seen_source_id <= batch_after_id:
+                    record_sync_event(
+                        selected_device_id,
+                        'fetch_since_stalled',
+                        host=host_now,
+                        after_id=batch_after_id,
+                        max_seen_source_id=max_seen_source_id,
+                    )
+                    break
+
+                last_id = max_seen_source_id
+                if received_rows < SYNC_CHUNK_SIZE:
+                    completed_history_sync = True
+                    break
+
             record_sync_event(
                 selected_device_id,
-                'fetch_since',
+                'fetch_since_summary',
                 host=host_now,
-                after_id=last_id,
-                ok=bool(missing.get('ok')),
-                rows=received_rows,
-                inserted=inserted_count,
-                response=summarize_response(missing),
+                batches=batches,
+                chunk_size=SYNC_CHUNK_SIZE,
+                rows=total_received,
+                inserted=total_inserted,
+                complete=completed_history_sync,
+                latest_after_id=last_id,
             )
 
             lecturas = await fetch_json(endpoints_now['lecturas'], timeout=4.0)
