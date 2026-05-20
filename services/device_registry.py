@@ -94,13 +94,19 @@ async def _resolve_host_quick(host: str, timeout: float = 0.4) -> str | None:
 
 async def _async_tcp_port_open(host: str, timeout: float) -> bool:
     target, port = _host_port(host)
+    writer = None
     try:
-        reader, writer = await asyncio.wait_for(asyncio.open_connection(target, port), timeout=timeout)
-        writer.close()
-        await writer.wait_closed()
+        _, writer = await asyncio.wait_for(asyncio.open_connection(target, port), timeout=timeout)
         return True
-    except (OSError, asyncio.TimeoutError):
+    except (OSError, asyncio.TimeoutError, ConnectionResetError):
         return False
+    finally:
+        if writer is not None:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except (OSError, asyncio.TimeoutError, ConnectionResetError):
+                pass
 
 
 async def _scan_http_hosts(hosts: list[str], timeout: float) -> list[str]:

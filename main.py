@@ -9,6 +9,10 @@ La aplicación queda organizada por módulos:
 
 import asyncio
 import importlib
+import sys
+
+if sys.platform.startswith('win'):
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from fastapi import Query
 from fastapi.responses import FileResponse, JSONResponse, Response
