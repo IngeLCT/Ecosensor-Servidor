@@ -79,8 +79,8 @@ def firmware_manifest(device_id: str) -> JSONResponse:
         return JSONResponse({'ok': False, 'error': str(exc)}, status_code=404)
 
 
-@app.get('/firmware/{device_id}/{filename}')
-def firmware_binary(device_id: str, filename: str) -> FileResponse | JSONResponse:
+@app.get('/firmware/{device_id}/{filename}', response_model=None)
+def firmware_binary(device_id: str, filename: str):
     try:
         path = firmware_file_path(device_id, filename)
     except OtaError as exc:
