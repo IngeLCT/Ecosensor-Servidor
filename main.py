@@ -8,6 +8,7 @@ La aplicación queda organizada por módulos:
 """
 
 import asyncio
+import importlib
 
 from fastapi import Query
 from fastapi.responses import JSONResponse, Response
@@ -19,9 +20,15 @@ from services.measurement_sync import background_sync_loop, debug_device_snapsho
 from services.sync_debug import sync_debug_snapshot
 from services.mdns_service import start_mdns_service
 from storage.measurements_store import graph_latest_row, graph_rows_history, graph_rows_since, measurements_csv_text
-import pages.connect_page  # registra / y /config
-import pages.dashboard_page  # registra /dashboard
-import pages.graphs_page  # registra /graficas/*
+
+
+def _register_pages() -> None:
+    """Carga módulos de páginas NiceGUI que registran rutas al importarse."""
+    for module_name in ('pages.connect_page', 'pages.dashboard_page', 'pages.graphs_page'):
+        importlib.import_module(module_name)
+
+
+_register_pages()
 
 app.add_static_files('/static', STATIC_DIR)
 
