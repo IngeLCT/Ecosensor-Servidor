@@ -11,12 +11,13 @@ import asyncio
 import importlib
 
 from fastapi import Query
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from nicegui import app, ui
 
 from config import STATIC_DIR, UI_HOST, UI_PORT
 from services.device_registry import active_devices, probe_failures
 from services.measurement_sync import background_sync_loop, debug_device_snapshot
+from services.ota_manager import OtaError, firmware_file_path, load_manifest, ota_snapshot, start_device_ota
 from services.sync_debug import sync_debug_snapshot
 from services.mdns_service import start_mdns_service
 from storage.measurements_store import graph_latest_row, graph_rows_history, graph_rows_since, measurements_csv_text
@@ -57,6 +58,34 @@ def debug_sync_events(device_id: str | None = Query(default=None)) -> JSONRespon
 @app.get('/api/debug/device')
 async def debug_device(device_id: str | None = Query(default=None)) -> JSONResponse:
     return JSONResponse(await debug_device_snapshot(device_id))
+
+
+@app.get('/api/ota/devices')
+async def api_ota_devices() -> JSONResponse:
+    return JSONResponse(await ota_snapshot())
+
+
+@app.post('/api/ota/update')
+async def api_ota_update(device_id: str = Query(...), force: bool = Query(default=False)) -> JSONResponse:
+    result = await start_device_ota(device_id, force=force)
+    return JSONResponse(result, status_code=200 if result.get('ok') else 400)
+
+
+@app.get('/firmware/{device_id}/manifest.json')
+def firmware_manifest(device_id: str) -> JSONResponse:
+    try:
+        return JSONResponse(load_manifest(device_id))
+    except OtaError as exc:
+        return JSONResponse({'ok': False, 'error': str(exc)}, status_code=404)
+
+
+@app.get('/firmware/{device_id}/{filename}')
+def firmware_binary(device_id: str, filename: str) -> FileResponse | JSONResponse:
+    try:
+        path = firmware_file_path(device_id, filename)
+    except OtaError as exc:
+        return JSONResponse({'ok': False, 'error': str(exc)}, status_code=404)
+    return FileResponse(path, media_type='application/octet-stream', filename=filename)
 
 
 @app.get('/api/measurements.csv')

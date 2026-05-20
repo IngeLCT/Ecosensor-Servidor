@@ -5,6 +5,7 @@ from nicegui import app, ui
 
 from services.device_registry import active_device_options, ensure_active_devices, ensure_device_active, host_for_device, probe_host, remember_host
 from services.esp_client import build_endpoints, delete_json, sync_time_if_needed
+from services.ota_manager import ota_snapshot, start_device_ota
 from shared.formatters import device_display_name
 from shared.styles import add_styles
 from storage.measurements_store import clear_measurements
@@ -57,6 +58,12 @@ def config_page(request: Request) -> None:
                 with ui.row().classes('justify-center gap-3'):
                     clear_wifi_button = ui.button('Borrar datos de WiFi').props('outline color=negative no-caps')
                     clear_history_button = ui.button('Borrar historial de mediciones').props('unelevated color=negative no-caps')
+
+            with ui.element('div').classes('connect-box'):
+                ui.label('Actualización OTA local').classes('connect-label')
+                ui.label('El servidor ordena al EcoSensor descargar su .bin desde esta red local.').classes('connect-label')
+                ota_container = ui.column().classes('w-full gap-2')
+                refresh_ota_button = ui.button('Actualizar estado OTA').props('outline no-caps')
 
     async def refresh_sensor_options() -> None:
         nonlocal selected_device_id
@@ -164,6 +171,48 @@ def config_page(request: Request) -> None:
                 ui.button('Borrar historial', on_click=confirm).props('unelevated color=negative')
         dialog.open()
 
+    async def refresh_ota_status() -> None:
+        ota_container.clear()
+        snapshot = await ota_snapshot()
+        devices = snapshot.get('devices') if isinstance(snapshot, dict) else []
+        if not devices:
+            with ota_container:
+                ui.label('No hay EcoSensores activos detectados.').classes('connect-label')
+            return
+        with ota_container:
+            for item in devices:
+                if not isinstance(item, dict):
+                    continue
+                device_id = str(item.get('device_id') or '-')
+                state_data = item.get('ota_status') if isinstance(item.get('ota_status'), dict) else {}
+                state = str(state_data.get('state') or 'sin respuesta')
+                progress = state_data.get('progress_pct')
+                progress_text = f' | {float(progress):.0f}%' if isinstance(progress, (int, float)) else ''
+                manifest_text = item.get('available_version') or item.get('manifest_error') or 'sin manifest'
+                current = item.get('current_version') or 'desconocida'
+                host = item.get('host') or '-'
+                can_update = bool(item.get('can_update'))
+                with ui.card().classes('w-full'):
+                    ui.label(f'{device_id}  |  host: {host}').classes('connect-label')
+                    ui.label(f'Versión actual: {current}  |  OTA disponible: {manifest_text}').classes('connect-label')
+                    ui.label(f'Estado OTA: {state}{progress_text}').classes('connect-label')
+                    if item.get('version_newer') == 0:
+                        ui.label('La versión disponible es igual a la actual; no se actualiza por defecto.').classes('connect-label')
+                    if item.get('version_newer') == -1:
+                        ui.label('La versión disponible es menor que la actual; no se actualiza por defecto.').classes('connect-label')
+
+                    async def update_device(did: str = device_id) -> None:
+                        result = await start_device_ota(did)
+                        if result.get('ok'):
+                            ui.notify(f'OTA iniciada para {did}.', color='positive')
+                        else:
+                            ui.notify(f'No se pudo iniciar OTA para {did}: {result.get("error")}', color='negative')
+                        await refresh_ota_status()
+
+                    update_button = ui.button('Actualizar', on_click=update_device).props('unelevated no-caps')
+                    if not can_update:
+                        update_button.disable()
+
     async def on_sensor_change(event: Any) -> None:
         nonlocal selected_device_id
         selected_device_id = str(event.value or '') or None
@@ -175,7 +224,9 @@ def config_page(request: Request) -> None:
 
     sensor_select.on_value_change(on_sensor_change)
     refresh_button.on('click', refresh_sensor_options)
+    refresh_ota_button.on('click', refresh_ota_status)
     connect_button.on('click', connect)
     clear_wifi_button.on('click', clear_wifi)
     clear_history_button.on('click', clear_history)
     ui.timer(0.1, refresh_sensor_options, once=True)
+    ui.timer(0.2, refresh_ota_status, once=True)

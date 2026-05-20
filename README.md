@@ -14,7 +14,10 @@ Esta versión incluye:
   - `GET /status`
   - `GET /lecturas`
   - `POST /config`
+  - `POST /ota/update`
+  - `GET /ota/status`
 - envío interno de fecha y hora del sistema al ESP32 cuando `/status` responde `time_valid: false`
+- OTA local sin hosting externo: el servidor almacena y sirve `.bin` por `device_id`
 - guardado local del host del ESP en `data/settings.json`
 
 ## Estructura del proyecto
@@ -34,6 +37,10 @@ shared/
   formatters.py         # formato de datos para UI
   styles.py             # CSS compartido
 static/                 # imágenes usadas por la interfaz
+firmware/               # binarios OTA por device_id
+  ecosensor02/
+    manifest.json
+    ecosensor02_v1.0.1.bin
 data/                   # configuración local generada en runtime
 ```
 
@@ -89,6 +96,65 @@ Opcionalmente se puede configurar host, puerto y nombre mDNS:
 ```bash
 ECOSENSOR_SERVER_HOST=0.0.0.0 ECOSENSOR_SERVER_PORT=8765 ECOSENSOR_MDNS_HOSTNAME=ecosensor-servidor python3 main.py
 ```
+
+## OTA local
+
+La OTA local funciona sin hosting externo:
+
+1. El servidor detecta EcoSensores activos.
+2. Para cada `device_id`, busca firmware en `firmware/<device_id>/manifest.json`.
+3. Desde `http://localhost:8765/config`, la sección **Actualización OTA local** muestra:
+   - `device_id`
+   - host/IP
+   - versión actual reportada por el ESP32
+   - versión disponible en manifest
+   - estado/progreso OTA
+   - botón **Actualizar** cuando aplica
+4. Al actualizar, el servidor envía al ESP32:
+   - `POST http://<host_esp>/ota/update`
+   - JSON con `device_id`, `version`, `firmware_url` y `sha256`
+5. El `firmware_url` apunta al propio servidor usando una IP LAN accesible desde el ESP32.
+6. El ESP32 descarga el `.bin`, lo escribe en la partición OTA libre y reinicia.
+
+### Estructura de firmware
+
+Cada EcoSensor tiene su propio directorio:
+
+```text
+firmware/
+  ecosensor01/
+    manifest.json
+    ecosensor01_v1.0.1.bin
+  ecosensor02/
+    manifest.json
+    ecosensor02_v1.0.1.bin
+```
+
+Manifest ejemplo:
+
+```json
+{
+  "device_id": "ecosensor02",
+  "version": "1.0.1",
+  "filename": "ecosensor02_v1.0.1.bin",
+  "enabled": true,
+  "sha256": "...",
+  "release_date": "2026-05-20"
+}
+```
+
+Para publicar una nueva versión basta con copiar el `.bin` al directorio del `device_id` y actualizar `manifest.json`.
+
+### Rutas OTA del servidor
+
+- `GET /firmware/<device_id>/manifest.json`
+- `GET /firmware/<device_id>/<archivo.bin>`
+- `GET /api/ota/devices`
+- `POST /api/ota/update?device_id=<device_id>`
+
+### Requisito inicial importante
+
+Un EcoSensor con firmware antiguo de partición **Single App Large** no puede actualizarse por OTA hasta flashearse una primera vez por USB/cable con la nueva tabla OTA (`ota_0`, `ota_1`, `otadata`). Después de esa migración, las siguientes actualizaciones pueden hacerse desde la interfaz local.
 
 ## Persistencia local
 

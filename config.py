@@ -4,6 +4,7 @@ from pathlib import Path
 APP_DIR = Path(__file__).resolve().parent
 DATA_DIR = APP_DIR / 'data'
 STATIC_DIR = APP_DIR / 'static'
+FIRMWARE_DIR = APP_DIR / 'firmware'
 SETTINGS_FILE = DATA_DIR / 'settings.json'
 MEASUREMENTS_DB_FILE = DATA_DIR / 'measurements.sqlite3'
 

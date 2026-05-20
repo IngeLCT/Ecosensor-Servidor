@@ -41,6 +41,8 @@ def build_endpoints(host: str) -> dict[str, str]:
         'time': f'{base_url}/time' if base_url else '',
         'diagnostics': f'{base_url}/diagnostics' if base_url else '',
         'debug': f'{base_url}/debug' if base_url else '',
+        'ota_update': f'{base_url}/ota/update' if base_url else '',
+        'ota_status': f'{base_url}/ota/status' if base_url else '',
         'wifi_clear': f'{base_url}/wifi/clear' if base_url else '',
         'readings_clear': f'{base_url}/lecturas/clear' if base_url else '',
     }
@@ -93,6 +95,20 @@ async def post_json(url: str, payload: dict[str, Any], timeout: float = 8.0) -> 
 
 async def delete_json(url: str, timeout: float = 8.0) -> dict[str, Any]:
     return await asyncio.to_thread(delete_json_sync, url, timeout)
+
+
+async def start_ota_update(host: str, payload: dict[str, Any], timeout: float = 5.0) -> dict[str, Any]:
+    endpoints = build_endpoints(host)
+    if not endpoints['ota_update']:
+        return {'ok': False, 'status': 0, 'url': '', 'data': 'missing host'}
+    return await post_json(endpoints['ota_update'], payload, timeout=timeout)
+
+
+async def fetch_ota_status(host: str, timeout: float = 3.0) -> dict[str, Any]:
+    endpoints = build_endpoints(host)
+    if not endpoints['ota_status']:
+        return {'ok': False, 'status': 0, 'url': '', 'data': 'missing host'}
+    return await fetch_json(endpoints['ota_status'], timeout=timeout)
 
 
 def candidate_hosts(saved_host: str, default_host: str) -> list[str]:
