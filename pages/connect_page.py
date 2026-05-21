@@ -48,22 +48,26 @@ def config_page(request: Request) -> None:
                 sensor_select = ui.select({}, value=None).props('outlined dense').classes('w-full connect-input device-select')
                 selected_host_info = ui.label('').classes('connect-label')
                 with ui.row().classes('justify-center gap-3'):
-                    refresh_button = ui.button('Actualizar lista').props('outline no-caps')
-                    connect_button = ui.button('Conectar / sincronizar hora').props('unelevated no-caps').classes('connect-button')
-                ui.button('Ir al dashboard', on_click=lambda: ui.navigate.to('/dashboard')).props('flat')
+                    refresh_button = ui.button('Actualizar lista').props('unelevated no-caps').classes('secondary-button action-button')
+                    connect_button = ui.button('Conectar / sincronizar hora').props('unelevated no-caps').classes('connect-button action-button')
+                ui.button('Ir al dashboard', on_click=lambda: ui.navigate.to('/dashboard')).props('flat no-caps').classes('dashboard-link')
 
             with ui.element('div').classes('connect-box'):
                 ui.label('Mantenimiento').classes('connect-label')
                 ui.label('Acciones disponibles solo desde el equipo servidor. Úsalas con cuidado.').classes('connect-label')
                 with ui.row().classes('justify-center gap-3'):
-                    clear_wifi_button = ui.button('Borrar datos de WiFi').props('outline color=negative no-caps')
-                    clear_history_button = ui.button('Borrar historial de mediciones').props('unelevated color=negative no-caps')
+                    clear_wifi_button = ui.button('Borrar datos de WiFi').props('unelevated no-caps').classes('danger-outline-button action-button')
+                    clear_history_button = ui.button('Borrar historial de mediciones').props('unelevated no-caps').classes('danger-button action-button')
 
             with ui.element('div').classes('connect-box'):
                 ui.label('Actualización OTA local').classes('connect-label')
-                ui.label('El servidor ordena al EcoSensor descargar su .bin desde esta red local.').classes('connect-label')
-                ota_container = ui.column().classes('w-full gap-2')
-                refresh_ota_button = ui.button('Actualizar estado OTA').props('outline no-caps')
+                ota_toggle_button = ui.button('Mostrar opciones OTA', icon='system_update_alt').props('unelevated no-caps').classes('ota-toggle-button action-button')
+                ota_panel = ui.column().classes('w-full gap-3 ota-panel')
+                ota_panel.visible = False
+                with ota_panel:
+                    ui.label('El servidor ordena al EcoSensor descargar su .bin desde esta red local.').classes('connect-label')
+                    refresh_ota_button = ui.button('Actualizar estado OTA').props('unelevated no-caps').classes('secondary-button action-button w-full')
+                    ota_container = ui.column().classes('w-full gap-2')
 
     async def refresh_sensor_options() -> None:
         nonlocal selected_device_id
@@ -223,10 +227,17 @@ def config_page(request: Request) -> None:
         await refresh_sensor_options()
 
     sensor_select.on_value_change(on_sensor_change)
+    async def toggle_ota_panel() -> None:
+        ota_panel.visible = not ota_panel.visible
+        ota_panel.update()
+        ota_toggle_button.set_text('Ocultar opciones OTA' if ota_panel.visible else 'Mostrar opciones OTA')
+        if ota_panel.visible:
+            await refresh_ota_status()
+
     refresh_button.on('click', refresh_sensor_options)
     refresh_ota_button.on('click', refresh_ota_status)
+    ota_toggle_button.on('click', toggle_ota_panel)
     connect_button.on('click', connect)
     clear_wifi_button.on('click', clear_wifi)
     clear_history_button.on('click', clear_history)
     ui.timer(0.1, refresh_sensor_options, once=True)
-    ui.timer(0.2, refresh_ota_status, once=True)

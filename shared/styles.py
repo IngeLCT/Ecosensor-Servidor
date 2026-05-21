@@ -75,7 +75,30 @@ def add_styles() -> None:
             text-align: left;
         }
         .connect-input .q-field__control { background: #fff; }
+        .action-button {
+            min-height: 42px;
+            border-radius: 7px !important;
+            font-weight: 800 !important;
+            letter-spacing: .01em;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, .16) !important;
+        }
         .connect-button { background: #214e78 !important; color: #fff !important; }
+        .secondary-button { background: #eef6fb !important; color: #173b57 !important; border: 1px solid #6f9fbd !important; }
+        .secondary-button:hover { background: #dceefa !important; }
+        .danger-outline-button { background: #fff5f5 !important; color: #9f1239 !important; border: 1px solid #be123c !important; }
+        .danger-button { background: #b00020 !important; color: #fff !important; }
+        .ota-toggle-button { background: #0f766e !important; color: #fff !important; width: 100%; }
+        .ota-panel {
+            background: rgba(255, 255, 255, .34);
+            border: 1px solid rgba(15, 118, 110, .28);
+            border-radius: 10px;
+            padding: 12px;
+        }
+        .dashboard-link {
+            color: #132f4c !important;
+            font-weight: 900 !important;
+            text-decoration: underline;
+        }
         .dashboard {
             width: min(1180px, 100%);
             margin: 0 auto;
