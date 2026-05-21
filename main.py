@@ -9,10 +9,10 @@ La aplicación queda organizada por módulos:
 
 import asyncio
 import importlib
-import sys
 
-if sys.platform.startswith('win'):
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+from services.windows_asyncio import install_connection_reset_filter, install_windows_selector_policy
+
+install_windows_selector_policy()
 
 from fastapi import Query
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -42,6 +42,7 @@ _background_sync_task: asyncio.Task | None = None
 
 def _start_background_sync() -> None:
     global _background_sync_task
+    install_connection_reset_filter()
     if _background_sync_task is None or _background_sync_task.done():
         _background_sync_task = asyncio.create_task(background_sync_loop())
 
