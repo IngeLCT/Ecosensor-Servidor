@@ -28,6 +28,7 @@ _probe_failures: dict[str, dict[str, Any]] = {}
 _probe_lock = asyncio.Lock()
 _refresh_task: asyncio.Task | None = None
 _last_refresh_at: datetime | None = None
+_registry_revision = 0
 
 
 def _now_iso() -> str:
@@ -272,6 +273,44 @@ def discovery_hosts() -> list[str]:
         if host not in hosts:
             hosts.append(host)
     return hosts
+
+
+def registry_revision() -> int:
+    return _registry_revision
+
+
+def forget_device(device_id: str) -> None:
+    """Quita un EcoSensor de la lista activa y de hosts recordados tras borrar WiFi."""
+    global _registry_revision
+    clean_device_id = (device_id or '').strip().lower()
+    if not clean_device_id:
+        return
+
+    removed = _active_devices.pop(clean_device_id, None)
+    settings = load_settings()
+    device_hosts = _settings_device_hosts(settings)
+    removed_host = device_hosts.pop(clean_device_id, None)
+
+    raw_hosts = settings.get('esp_hosts')
+    if isinstance(raw_hosts, list) and removed_host:
+        settings['esp_hosts'] = [
+            normalize_host_input(str(item))
+            for item in raw_hosts
+            if normalize_host_input(str(item)) and normalize_host_input(str(item)) != removed_host
+        ]
+
+    if settings.get('device_id') == clean_device_id:
+        settings.pop('device_id', None)
+    if removed_host and normalize_host_input(str(settings.get('esp_host') or '')) == removed_host:
+        settings.pop('esp_host', None)
+
+    settings['device_hosts'] = device_hosts
+    save_settings(settings)
+
+    if removed_host:
+        _probe_failures.pop(removed_host, None)
+    if removed is not None or removed_host is not None:
+        _registry_revision += 1
 
 
 def remember_host(host: str, device_id: str | None = None) -> None:

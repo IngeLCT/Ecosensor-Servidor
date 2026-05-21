@@ -3,7 +3,7 @@ from typing import Any
 from fastapi import Request
 from nicegui import app, ui
 
-from services.device_registry import active_device_options, ensure_active_devices, ensure_device_active, host_for_device, probe_host, remember_host
+from services.device_registry import active_device_options, ensure_active_devices, ensure_device_active, forget_device, host_for_device, probe_host, registry_revision, remember_host
 from services.esp_client import build_endpoints, delete_json, sync_time_if_needed
 from services.ota_manager import ota_snapshot, start_device_ota
 from shared.formatters import device_display_name
@@ -37,6 +37,7 @@ def config_page(request: Request) -> None:
         return
 
     selected_device_id: str | None = str(app.storage.user.get('selected_device_id') or '') or None
+    seen_registry_revision = {'value': registry_revision()}
 
     with ui.element('div').classes('connect-shell'):
         with ui.element('div').classes('connect-card'):
@@ -144,7 +145,12 @@ def config_page(request: Request) -> None:
                     dialog.close()
                     result = await delete_json(build_endpoints(host)['wifi_clear'])
                     if result.get('ok'):
-                        ui.notify(f'Credenciales WiFi borradas en {device_id}.', color='positive')
+                        forget_device(device_id)
+                        if app.storage.user.get('selected_device_id') == device_id:
+                            app.storage.user.pop('selected_device_id', None)
+                        ui.notify(f'Credenciales WiFi borradas en {device_display_name(device_id)}. Quitado de las listas activas.', color='positive')
+                        await refresh_sensor_options()
+                        await refresh_ota_status(rebuild=True)
                     else:
                         ui.notify(f'No se pudo borrar WiFi: {result.get("data")}', color='negative')
 
@@ -214,16 +220,21 @@ def config_page(request: Request) -> None:
             button.disable()
         button.set_text('Actualizar')
 
-    async def refresh_ota_status(*, rebuild: bool = True) -> dict[str, Any]:
+    async def refresh_ota_status(*, rebuild: bool = True, only_device_id: str | None = None) -> dict[str, Any]:
         snapshot = await ota_snapshot()
         devices = snapshot.get('devices') if isinstance(snapshot, dict) else []
         if not isinstance(devices, list):
             devices = []
 
         if not rebuild:
+            target = (only_device_id or '').strip().lower()
             for item in devices:
-                if isinstance(item, dict):
-                    _update_ota_card_values(item)
+                if not isinstance(item, dict):
+                    continue
+                item_device_id = str(item.get('device_id') or '').strip().lower()
+                if target and item_device_id != target:
+                    continue
+                _update_ota_card_values(item)
             return snapshot
 
         ota_container.clear()
@@ -246,7 +257,7 @@ def config_page(request: Request) -> None:
                         start_ota_auto_refresh(did)
                     else:
                         ui.notify(f'No se pudo iniciar OTA para {did}: {result.get("error")}', color='negative')
-                    await refresh_ota_status(rebuild=False)
+                    await refresh_ota_status(rebuild=False, only_device_id=did)
 
                 with ui.card().classes('w-full'):
                     title_label = ui.label('').classes('connect-label')
@@ -293,7 +304,7 @@ def config_page(request: Request) -> None:
             ota_auto_timer.deactivate()
             return
 
-        snapshot = await refresh_ota_status(rebuild=False)
+        snapshot = await refresh_ota_status(rebuild=False, only_device_id=device_id)
         devices = snapshot.get('devices') if isinstance(snapshot, dict) else []
         target = next((item for item in devices if isinstance(item, dict) and item.get('device_id') == device_id), None)
         state_data = target.get('ota_status') if isinstance(target, dict) and isinstance(target.get('ota_status'), dict) else {}
@@ -316,6 +327,14 @@ def config_page(request: Request) -> None:
 
     ota_auto_timer = ui.timer(2.0, auto_refresh_ota_status, active=False)
 
+    async def refresh_options_if_registry_changed() -> None:
+        current = registry_revision()
+        if current != seen_registry_revision['value']:
+            seen_registry_revision['value'] = current
+            await refresh_sensor_options()
+            if ota_panel.visible:
+                await refresh_ota_status(rebuild=True)
+
     sensor_select.on_value_change(on_sensor_change)
     async def toggle_ota_panel() -> None:
         ota_panel.visible = not ota_panel.visible
@@ -330,4 +349,5 @@ def config_page(request: Request) -> None:
     connect_button.on('click', connect)
     clear_wifi_button.on('click', clear_wifi)
     clear_history_button.on('click', clear_history)
+    ui.timer(1.0, refresh_options_if_registry_changed)
     ui.timer(0.1, refresh_sensor_options, once=True)

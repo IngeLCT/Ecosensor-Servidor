@@ -2,7 +2,7 @@ from typing import Any
 
 from nicegui import app, ui
 
-from services.device_registry import active_device_options, ensure_active_devices
+from services.device_registry import active_device_options, ensure_active_devices, registry_revision
 from services.measurement_sync import sync_sensor_measurements
 from shared.formatters import format_value
 from shared.styles import add_styles
@@ -15,6 +15,7 @@ def dashboard() -> None:
     add_styles()
 
     selected_device_id: str | None = None
+    seen_registry_revision = {'value': registry_revision()}
 
     with ui.element('div').classes('dashboard'):
         with ui.element('nav').classes('top-nav'):
@@ -155,6 +156,13 @@ def dashboard() -> None:
             app.storage.user.pop('selected_device_id', None)
         await refresh()
 
+    async def refresh_if_registry_changed() -> None:
+        current = registry_revision()
+        if current != seen_registry_revision['value']:
+            seen_registry_revision['value'] = current
+            await refresh()
+
     sensor_select.on_value_change(on_sensor_change)
+    ui.timer(1.0, refresh_if_registry_changed)
     ui.timer(60.0, refresh)
     ui.timer(0.1, refresh, once=True)
