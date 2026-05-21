@@ -177,49 +177,91 @@ def config_page(request: Request) -> None:
         dialog.open()
 
     ota_auto_refresh = {'remaining': 0, 'device_id': ''}
+    ota_cards: dict[str, dict[str, Any]] = {}
 
-    async def refresh_ota_status() -> None:
-        ota_container.clear()
+    def _ota_state_text(item: dict[str, Any]) -> str:
+        state_data = item.get('ota_status') if isinstance(item.get('ota_status'), dict) else {}
+        state = str(state_data.get('state') or 'sin respuesta')
+        progress = state_data.get('progress_pct')
+        progress_text = f' | {float(progress):.0f}%' if isinstance(progress, (int, float)) else ''
+        return f'Estado OTA: {state}{progress_text}'
+
+    def _ota_note_text(item: dict[str, Any]) -> str:
+        if item.get('version_newer') == 0:
+            return 'La versión disponible es igual a la actual; no se actualiza por defecto.'
+        if item.get('version_newer') == -1:
+            return 'La versión disponible es menor que la actual; no se actualiza por defecto.'
+        if not item.get('manifest_ok'):
+            return 'No hay firmware OTA disponible para este dispositivo.'
+        return ''
+
+    def _update_ota_card_values(item: dict[str, Any]) -> None:
+        device_id = str(item.get('device_id') or '-')
+        refs = ota_cards.get(device_id)
+        if not refs:
+            return
+        manifest_text = item.get('available_version') or item.get('manifest_error') or 'sin manifest'
+        current = item.get('current_version') or 'desconocida'
+        host = item.get('host') or '-'
+        refs['title'].set_text(f'{device_display_name(device_id)}  |  host: {host}')
+        refs['version'].set_text(f'Versión actual: {current}  |  OTA disponible: {manifest_text}')
+        refs['state'].set_text(_ota_state_text(item))
+        refs['note'].set_text(_ota_note_text(item))
+        button = refs['button']
+        if item.get('can_update'):
+            button.enable()
+        else:
+            button.disable()
+        button.set_text('Actualizar')
+
+    async def refresh_ota_status(*, rebuild: bool = True) -> dict[str, Any]:
         snapshot = await ota_snapshot()
         devices = snapshot.get('devices') if isinstance(snapshot, dict) else []
+        if not isinstance(devices, list):
+            devices = []
+
+        if not rebuild:
+            for item in devices:
+                if isinstance(item, dict):
+                    _update_ota_card_values(item)
+            return snapshot
+
+        ota_container.clear()
+        ota_cards.clear()
         if not devices:
             with ota_container:
                 ui.label('No hay EcoSensores activos detectados.').classes('connect-label')
-            return
+            return snapshot
+
         with ota_container:
             for item in devices:
                 if not isinstance(item, dict):
                     continue
                 device_id = str(item.get('device_id') or '-')
-                state_data = item.get('ota_status') if isinstance(item.get('ota_status'), dict) else {}
-                state = str(state_data.get('state') or 'sin respuesta')
-                progress = state_data.get('progress_pct')
-                progress_text = f' | {float(progress):.0f}%' if isinstance(progress, (int, float)) else ''
-                manifest_text = item.get('available_version') or item.get('manifest_error') or 'sin manifest'
-                current = item.get('current_version') or 'desconocida'
-                host = item.get('host') or '-'
-                can_update = bool(item.get('can_update'))
+
+                async def update_device(did: str = device_id) -> None:
+                    result = await start_device_ota(did)
+                    if result.get('ok'):
+                        ui.notify(f'OTA iniciada para {did}. Actualizando solo el estado automáticamente.', color='positive')
+                        start_ota_auto_refresh(did)
+                    else:
+                        ui.notify(f'No se pudo iniciar OTA para {did}: {result.get("error")}', color='negative')
+                    await refresh_ota_status(rebuild=False)
+
                 with ui.card().classes('w-full'):
-                    ui.label(f'{device_display_name(device_id)}  |  host: {host}').classes('connect-label')
-                    ui.label(f'Versión actual: {current}  |  OTA disponible: {manifest_text}').classes('connect-label')
-                    ui.label(f'Estado OTA: {state}{progress_text}').classes('connect-label')
-                    if item.get('version_newer') == 0:
-                        ui.label('La versión disponible es igual a la actual; no se actualiza por defecto.').classes('connect-label')
-                    if item.get('version_newer') == -1:
-                        ui.label('La versión disponible es menor que la actual; no se actualiza por defecto.').classes('connect-label')
-
-                    async def update_device(did: str = device_id) -> None:
-                        result = await start_device_ota(did)
-                        if result.get('ok'):
-                            ui.notify(f'OTA iniciada para {did}. Actualizando estado automáticamente.', color='positive')
-                            start_ota_auto_refresh(did)
-                        else:
-                            ui.notify(f'No se pudo iniciar OTA para {did}: {result.get("error")}', color='negative')
-                        await refresh_ota_status()
-
+                    title_label = ui.label('').classes('connect-label')
+                    version_label = ui.label('').classes('connect-label')
+                    state_label = ui.label('').classes('connect-label')
+                    note_label = ui.label('').classes('connect-label')
                     update_button = ui.button('Actualizar', on_click=update_device).props('unelevated no-caps')
-                    if not can_update:
-                        update_button.disable()
+                    ota_cards[device_id] = {
+                        'title': title_label,
+                        'version': version_label,
+                        'state': state_label,
+                        'note': note_label,
+                        'button': update_button,
+                    }
+                    _update_ota_card_values(item)
 
     async def on_sensor_change(event: Any) -> None:
         nonlocal selected_device_id
@@ -251,7 +293,18 @@ def config_page(request: Request) -> None:
             ota_auto_timer.deactivate()
             return
 
-        await refresh_ota_status()
+        snapshot = await refresh_ota_status(rebuild=False)
+        devices = snapshot.get('devices') if isinstance(snapshot, dict) else []
+        target = next((item for item in devices if isinstance(item, dict) and item.get('device_id') == device_id), None)
+        state_data = target.get('ota_status') if isinstance(target, dict) and isinstance(target.get('ota_status'), dict) else {}
+        version_newer = target.get('version_newer') if isinstance(target, dict) else None
+        ota_state = str(state_data.get('state') or '')
+        if version_newer == 0 or ota_state in {'success', 'idle'} and version_newer == 0:
+            ota_auto_timer.deactivate()
+            ota_auto_refresh['remaining'] = 0
+            ota_auto_info.set_text(f'{device_display_name(device_id)} ya está actualizado. Actualización automática detenida.')
+            return
+
         remaining -= 1
         ota_auto_refresh['remaining'] = remaining
         if remaining <= 0:
@@ -259,7 +312,7 @@ def config_page(request: Request) -> None:
             ota_auto_info.set_text('')
         else:
             seconds_left = remaining * 2
-            ota_auto_info.set_text(f'Actualizando estado OTA de {device_display_name(device_id)} automáticamente cada 2 s ({seconds_left} s restantes)...')
+            ota_auto_info.set_text(f'Actualizando solo estado OTA de {device_display_name(device_id)} cada 2 s ({seconds_left} s restantes)...')
 
     ota_auto_timer = ui.timer(2.0, auto_refresh_ota_status, active=False)
 
