@@ -130,8 +130,17 @@ async def log_co2_diagnostics_if_needed(
     valid = bool(source.get('valid', last_reading.get('valid', False)))
     scd40_ret = _int_or_none(sensor_debug.get('scd40_ret'))
     scd40_diag = _int_or_none(sensor_debug.get('scd40_diag'))
+    sample_slot = _int_or_none(sensor_debug.get('sample_slot')) or 0
+    samples_per_window = _int_or_none(sensor_debug.get('samples_per_window')) or 0
+    scd40_error_count = _int_or_none(sensor_debug.get('scd40_error_count')) or 0
     reason = _co2_problem_reason(co2, scd40_ret, scd40_diag, valid)
     measurement_id = str(last_reading.get('measurement_id') or source.get('measurement_id') or '')
+
+    # Si /lecturas aún no tiene promedio porque la ventana de 60 muestras sigue
+    # abierta, valid=False es normal. Solo alertar si el SCD40 reporta error real.
+    window_in_progress = not measurement_id and samples_per_window > 0 and 0 < sample_slot < samples_per_window
+    if reason == 'lectura_no_valida' and window_in_progress and scd40_diag in (None, 0) and scd40_ret in (None, 0) and scd40_error_count == 0:
+        reason = None
     should_print_window = force or bool(measurement_id and _last_co2_window_log.get(clean_device_id) != measurement_id)
     should_print_alert = reason is not None and _should_print(
         clean_device_id,
