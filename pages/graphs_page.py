@@ -8,6 +8,7 @@ from nicegui import app, ui
 
 from services.device_registry import active_device_options, ensure_active_devices
 from services.measurement_sync import sync_sensor_measurements
+from shared.formatters import device_display_name
 from shared.styles import add_styles
 from storage.measurements_store import graph_rows_all, graph_rows_history
 
@@ -613,7 +614,7 @@ def _graph_page(page_title: str, charts: list[ChartSpec]) -> None:
                 app.storage.user['selected_device_id'] = selected_device_id
             else:
                 app.storage.user.pop('selected_device_id', None)
-        id_label.set_text(f'ID: {selected_device_id or "-"}')
+        id_label.set_text(f'ID: {device_display_name(selected_device_id) if selected_device_id else "-"}')
 
     def schedule_next_refresh(delay_seconds: float) -> None:
         ui.timer(delay_seconds, refresh, once=True)
@@ -815,6 +816,16 @@ def _build_history_figure(labels: list[str], values: list[float], times: list[An
     return fig
 
 
+def _table_datetime_label(label: str) -> str:
+    if ' ' not in label:
+        return label or '-'
+    date_part, time_part = label.split(' ', 1)
+    parts = date_part.split('-')
+    if len(parts) == 3:
+        date_part = f'{parts[2]}-{parts[1]}-{parts[0]}'
+    return f'{date_part} {time_part}'
+
+
 def _history_table_html(labels: list[str], values: list[float], spec: ChartSpec, minutes: int) -> str:
     unit_label = _interval_label(minutes)
     rows = []
@@ -823,7 +834,7 @@ def _history_table_html(labels: list[str], values: list[float], spec: ChartSpec,
             pretty = str(round(value))
         else:
             pretty = f'{value:.2f}'
-        rows.append(f'<tr><td>{idx}</td><td>{label or "-"}</td><td>{pretty}</td></tr>')
+        rows.append(f'<tr><td>{idx}</td><td>{_table_datetime_label(label)}</td><td>{pretty}</td></tr>')
     return (
         '<div class="data-table-container">'
         '<table id="uploadTable">'
@@ -989,7 +1000,7 @@ def history_graph() -> None:
                 app.storage.user['selected_device_id'] = selected_device_id
             else:
                 app.storage.user.pop('selected_device_id', None)
-        id_label.set_text(f'ID: {selected_device_id or "-"}')
+        id_label.set_text(f'ID: {device_display_name(selected_device_id) if selected_device_id else "-"}')
 
     async def load_history() -> None:
         nonlocal frame_cache

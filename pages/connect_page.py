@@ -200,7 +200,7 @@ def config_page(request: Request) -> None:
                 host = item.get('host') or '-'
                 can_update = bool(item.get('can_update'))
                 with ui.card().classes('w-full'):
-                    ui.label(f'{device_id}  |  host: {host}').classes('connect-label')
+                    ui.label(f'{device_display_name(device_id)}  |  host: {host}').classes('connect-label')
                     ui.label(f'Versión actual: {current}  |  OTA disponible: {manifest_text}').classes('connect-label')
                     ui.label(f'Estado OTA: {state}{progress_text}').classes('connect-label')
                     if item.get('version_newer') == 0:
@@ -233,7 +233,7 @@ def config_page(request: Request) -> None:
     def start_ota_auto_refresh(device_id: str) -> None:
         ota_auto_refresh['remaining'] = 60
         ota_auto_refresh['device_id'] = device_id
-        ota_auto_info.set_text(f'Actualizando estado OTA de {device_id} automáticamente cada 2 s...')
+        ota_auto_info.set_text(f'Actualizando estado OTA de {device_display_name(device_id)} automáticamente cada 2 s...')
         if not ota_panel.visible:
             ota_panel.visible = True
             ota_panel.update()
@@ -259,7 +259,7 @@ def config_page(request: Request) -> None:
             ota_auto_info.set_text('')
         else:
             seconds_left = remaining * 2
-            ota_auto_info.set_text(f'Actualizando estado OTA de {device_id} automáticamente cada 2 s ({seconds_left} s restantes)...')
+            ota_auto_info.set_text(f'Actualizando estado OTA de {device_display_name(device_id)} automáticamente cada 2 s ({seconds_left} s restantes)...')
 
     ota_auto_timer = ui.timer(2.0, auto_refresh_ota_status, active=False)
 
