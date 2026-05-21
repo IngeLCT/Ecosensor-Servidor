@@ -42,6 +42,24 @@ def summarize_response(response: dict[str, Any] | None) -> dict[str, Any]:
     return summary
 
 
+def _should_print_sync_event(event: str, details: dict[str, Any]) -> bool:
+    """Mantiene historial completo en memoria, pero reduce ruido en consola."""
+    if event in {'loop_error', 'co2_diagnostics_error', 'fetch_recent_stalled', 'fetch_since_stalled'}:
+        return True
+    if event == 'inactive':
+        return True
+    if event == 'time_sync':
+        return not bool(details.get('ok'))
+    if event == 'fetch_latest':
+        return (not bool(details.get('ok'))) or (not bool(details.get('valid')))
+    if event in {'fetch_recent_summary', 'fetch_since_summary'}:
+        rows = int(details.get('rows') or 0)
+        inserted = int(details.get('inserted') or 0)
+        complete = bool(details.get('complete'))
+        return rows > 0 or inserted > 0 or not complete
+    return False
+
+
 def record_sync_event(device_id: str, event: str, **details: Any) -> dict[str, Any]:
     clean_device_id = (device_id or 'unknown').strip().lower() or 'unknown'
     payload: dict[str, Any] = {
@@ -54,12 +72,14 @@ def record_sync_event(device_id: str, event: str, **details: Any) -> dict[str, A
     _last_by_device[clean_device_id] = payload
 
     # Debug operativo: queda en la consola del servidor, no en la UI.
-    compact = ' '.join(
-        f'{key}={value}'
-        for key, value in payload.items()
-        if key not in {'ts', 'device_id', 'event'} and value is not None
-    )
-    print(f"[ecosensor-sync] {payload['ts']} {clean_device_id} {event} {compact}".rstrip(), flush=True)
+    # Se imprime solo lo esencial; /api/debug/sync conserva los eventos recientes.
+    if _should_print_sync_event(event, details):
+        compact = ' '.join(
+            f'{key}={value}'
+            for key, value in payload.items()
+            if key not in {'ts', 'device_id', 'event'} and value is not None
+        )
+        print(f"[ecosensor-sync] {payload['ts']} {clean_device_id} {event} {compact}".rstrip(), flush=True)
     return payload
 
 

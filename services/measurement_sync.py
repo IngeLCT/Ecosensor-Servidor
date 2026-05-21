@@ -12,6 +12,7 @@ from services.device_registry import (
     refresh_active_devices,
 )
 from services.esp_client import build_endpoints, fetch_json, fetch_readings_since, fetch_recent_readings, sync_time_if_needed
+from services.sensor_diagnostics import log_co2_diagnostics_if_needed
 from services.sync_debug import record_sync_event, summarize_response, sync_debug_snapshot
 from shared.formatters import row_from_payload
 from storage.measurements_store import get_latest_measurement, latest_source_id, measurement_debug_summary, save_measurement
@@ -191,17 +192,30 @@ async def sync_sensor_measurements(device_id: str | None = None) -> dict[str, An
                     except (TypeError, ValueError):
                         latest_remote_id = 0
                     latest_inserted = await asyncio.to_thread(save_measurement, host_now, row)
+            latest_valid = bool(isinstance(data, dict) and data.get('valid'))
             record_sync_event(
                 selected_device_id,
                 'fetch_latest',
                 host=host_now,
                 ok=bool(lecturas.get('ok')),
-                valid=bool(isinstance(data, dict) and data.get('valid')),
+                valid=latest_valid,
                 inserted=latest_inserted,
                 local_floor_id=local_floor_id,
                 latest_remote_id=latest_remote_id,
                 response=summarize_response(lecturas),
             )
+
+            latest_co2 = None
+            if isinstance(data, dict):
+                try:
+                    latest_co2 = int(data.get('co2') or 0)
+                except (TypeError, ValueError):
+                    latest_co2 = None
+            if selected_device_id == 'ecosensor02' or latest_co2 == 0 or not latest_valid:
+                try:
+                    await log_co2_diagnostics_if_needed(selected_device_id, host_now, data if isinstance(data, dict) else None)
+                except Exception as exc:
+                    record_sync_event(selected_device_id, 'co2_diagnostics_error', error=str(exc)[:180])
 
             # Prioridad 2: si el firmware nuevo está disponible, rellenar hacia
             # atrás desde lo más reciente. Así las gráficas obtienen primero los
