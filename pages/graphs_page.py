@@ -383,6 +383,13 @@ def _fmt_label(ts: Any) -> str:
     return ts.strftime('%Y-%m-%d %H:%M')
 
 
+def _short_date_label(date_part: str) -> str:
+    parts = date_part.split('-')
+    if len(parts) == 3:
+        return f'{parts[2]}/{parts[1]}'
+    return date_part
+
+
 def _tick_text(labels: list[str], minutes: int) -> list[str]:
     out: list[str] = []
     last_date = ''
@@ -393,7 +400,7 @@ def _tick_text(labels: list[str], minutes: int) -> list[str]:
         date_part, time_part = label.split(' ', 1)
         display = time_part[:5]
         if date_part != last_date:
-            display = f'{display}<br>{date_part.split("-")[2]}-{date_part.split("-")[1]}-{date_part.split("-")[0]}'
+            display = f'{display}<br><span style="font-size:11px">{_short_date_label(date_part)}</span>'
             last_date = date_part
         out.append(display)
     return out
@@ -463,7 +470,7 @@ def _build_figure(frame: Any, spec: ChartSpec, minutes: int) -> Any:
     )
     fig.update_layout(
         height=600,
-        margin={'t': 20, 'l': 60, 'r': 40, 'b': 110},
+        margin={'t': 20, 'l': 60, 'r': 40, 'b': 135},
         bargap=0.2,
         paper_bgcolor='#cce5dc',
         plot_bgcolor='#cce5dc',
@@ -479,8 +486,8 @@ def _build_figure(frame: Any, spec: ChartSpec, minutes: int) -> Any:
         automargin=True,
         gridcolor='black',
         linecolor='black',
-        title={'text': '<b>Fecha y Hora de Medición</b>', 'font': {'size': 16, 'color': 'black', 'family': 'Arial'}, 'standoff': 30},
-        tickfont={'color': 'black', 'size': 14, 'family': 'Arial'},
+        title={'text': '<b>Fecha y Hora de Medición</b>', 'font': {'size': 16, 'color': 'black', 'family': 'Arial'}, 'standoff': 42},
+        tickfont={'color': 'black', 'size': 13, 'family': 'Arial'},
     )
     fig.update_yaxes(
         title={'text': f'<b>{spec.y_title}</b>', 'font': {'size': 16, 'color': 'black', 'family': 'Arial'}},
@@ -704,7 +711,7 @@ def _history_category_ticks(labels: list[str], minutes: int) -> tuple[list[int],
             continue
         base = time_part[:5]
         if date_part != previous_date:
-            ticktext.append(f'{base}<br>{date_part}')
+            ticktext.append(f'{base}<br><span style="font-size:11px">{_short_date_label(date_part)}</span>')
             previous_date = date_part
         else:
             ticktext.append(base)
@@ -730,7 +737,7 @@ def _build_history_figure(labels: list[str], values: list[float], times: list[An
     fig = go.Figure(data=[go.Bar(x=x_values, y=display_values, name=spec.title, marker={'color': spec.color})])
     fig.update_layout(
         height=600,
-        margin={'t': 20, 'l': 60, 'r': 40, 'b': 95 if minutes == 1440 else 130},
+        margin={'t': 20, 'l': 60, 'r': 40, 'b': 95 if minutes == 1440 else 150},
         bargap=0.2,
         paper_bgcolor='#cce5dc',
         plot_bgcolor='#cce5dc',
@@ -751,9 +758,9 @@ def _build_history_figure(labels: list[str], values: list[float], times: list[An
         title={
             'text': '<b>Fecha de Medición</b>' if minutes == 1440 else '<b>Fecha y Hora de Medición</b>',
             'font': {'size': 16, 'color': 'black', 'family': 'Arial'},
-            'standoff': 36,
+            'standoff': 46,
         },
-        tickfont={'color': 'black', 'size': 14, 'family': 'Arial'},
+        tickfont={'color': 'black', 'size': 13, 'family': 'Arial'},
     )
     fig.update_yaxes(
         title={'text': f'<b>{spec.y_title}</b>', 'font': {'size': 16, 'color': 'black', 'family': 'Arial'}},
