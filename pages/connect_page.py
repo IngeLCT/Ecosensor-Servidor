@@ -50,7 +50,7 @@ def config_page(request: Request) -> None:
                 selected_host_info = ui.label('').classes('connect-label')
                 with ui.row().classes('justify-center gap-3'):
                     refresh_button = ui.button('Actualizar lista').props('unelevated no-caps').classes('secondary-button action-button')
-                    connect_button = ui.button('Conectar / sincronizar hora').props('unelevated no-caps').classes('connect-button action-button')
+                    connect_button = ui.button('Sincronizar hora').props('unelevated no-caps').classes('connect-button action-button')
                 ui.button('Ir al dashboard', on_click=lambda: ui.navigate.to('/dashboard')).props('flat no-caps').classes('dashboard-link')
 
             with ui.element('div').classes('connect-box'):
