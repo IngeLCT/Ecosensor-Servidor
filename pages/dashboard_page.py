@@ -49,7 +49,7 @@ def dashboard() -> None:
             ui.button(
                 'Descargar CSV',
                 on_click=lambda: ui.navigate.to(f'/api/measurements.csv?device_id={selected_device_id or ""}'),
-            ).classes('button1')
+            ).props('unelevated no-caps').classes('button1')
 
     def render_table(row: dict[str, Any] | None) -> None:
         if not row:

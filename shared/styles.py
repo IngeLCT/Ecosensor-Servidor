@@ -221,21 +221,31 @@ def add_styles() -> None:
             .measure-table td { font-size: 18px; }
         }
         /* --- Nuevos Estilos para Botones --- */
-        .button1 {
-            padding: 12px 25px; /* Aumenta el relleno interno para hacer los botones más grandes */
-            font-size: 19px; /* Hace el texto dentro del botón más grande */
-            border-radius: 8px; /* Le da esquinas más redondeadas */
+        .q-btn.button1 {
+            min-height: 48px !important;
+            padding: 12px 25px !important; /* Aumenta el relleno interno para hacer los botones más grandes */
+            font-size: 19px !important; /* Hace el texto dentro del botón más grande */
+            border-radius: 8px !important; /* Le da esquinas más redondeadas */
             cursor: pointer; /* Indica que es clickeable */
-            background-color: #006fe6; /* Color azul, puedes cambiarlo */
-            color: white; /* Color del texto del botón */
-            border: none; /* Elimina el borde predeterminado */
+            background: #006fe6 !important; /* Color azul, puedes cambiarlo */
+            background-color: #006fe6 !important;
+            color: white !important; /* Color del texto del botón */
+            border: none !important; /* Elimina el borde predeterminado */
             transition: background-color 0.3s ease; /* Transición suave para el efecto hover */
             margin: 10px; /* Margen alrededor del botón para separarlo de otros elementos */
-            display: inline-block; /* Permite que los botones se coloquen en la misma línea si hay espacio */
+            display: inline-flex; /* Mantiene el layout correcto del botón Quasar */
+            box-shadow: 0 2px 5px rgba(0, 0, 0, .16) !important;
+        }
+
+        .q-btn.button1 .q-btn__content {
+            color: white !important;
+            font-size: 19px !important;
+            font-weight: 800 !important;
         }
         
-        .button1:hover {
-            background-color: #004a99; /* Un tono más oscuro al pasar el ratón */
+        .q-btn.button1:hover {
+            background: #004a99 !important; /* Un tono más oscuro al pasar el ratón */
+            background-color: #004a99 !important;
         }
         </style>
         '''
