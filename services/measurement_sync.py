@@ -12,7 +12,7 @@ from services.device_registry import (
     refresh_active_devices,
 )
 from services.esp_client import build_endpoints, fetch_json, fetch_readings_since, fetch_recent_readings, sync_time_if_needed
-from services.sensor_diagnostics import log_co2_diagnostics_if_needed
+from services.sensor_diagnostics import log_co2_diagnostics_if_needed, log_temp_humidity_sources_if_needed
 from services.sync_debug import record_sync_event, summarize_response, sync_debug_snapshot
 from shared.formatters import row_from_payload
 from storage.measurements_store import get_latest_measurement, latest_source_id, measurement_debug_summary, save_measurement
@@ -192,6 +192,7 @@ async def sync_sensor_measurements(device_id: str | None = None) -> dict[str, An
                     except (TypeError, ValueError):
                         latest_remote_id = 0
                     latest_inserted = await asyncio.to_thread(save_measurement, host_now, row)
+                    log_temp_humidity_sources_if_needed(selected_device_id, data)
             latest_valid = bool(isinstance(data, dict) and data.get('valid'))
             record_sync_event(
                 selected_device_id,

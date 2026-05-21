@@ -28,6 +28,10 @@ def row_from_payload(payload: dict[str, Any] | None) -> dict[str, Any] | None:
         'co2': payload.get('co2'),
         'temp': payload.get('temp'),
         'hum': payload.get('hum'),
+        'scd_temp': payload.get('scd_temp'),
+        'scd_hum': payload.get('scd_hum'),
+        'sen_temp': payload.get('sen_temp'),
+        'sen_hum': payload.get('sen_hum'),
         'window_s': payload.get('window_s'),
     }
 

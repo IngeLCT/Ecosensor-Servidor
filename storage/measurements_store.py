@@ -28,6 +28,10 @@ CREATE TABLE IF NOT EXISTS measurements (
     co2 REAL,
     temp REAL,
     hum REAL,
+    scd_temp REAL,
+    scd_hum REAL,
+    sen_temp REAL,
+    sen_hum REAL,
     window_s INTEGER
 );
 '''
@@ -65,6 +69,14 @@ def ensure_db(device_id: str | None = None) -> None:
             conn.execute('ALTER TABLE measurements ADD COLUMN time_valid INTEGER')
         if 'time_source' not in columns:
             conn.execute('ALTER TABLE measurements ADD COLUMN time_source TEXT')
+        if 'scd_temp' not in columns:
+            conn.execute('ALTER TABLE measurements ADD COLUMN scd_temp REAL')
+        if 'scd_hum' not in columns:
+            conn.execute('ALTER TABLE measurements ADD COLUMN scd_hum REAL')
+        if 'sen_temp' not in columns:
+            conn.execute('ALTER TABLE measurements ADD COLUMN sen_temp REAL')
+        if 'sen_hum' not in columns:
+            conn.execute('ALTER TABLE measurements ADD COLUMN sen_hum REAL')
         conn.execute(
             '''
             CREATE UNIQUE INDEX IF NOT EXISTS idx_measurements_device_timestamp
@@ -146,6 +158,10 @@ def _measurement_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         'co2': row['co2'],
         'temp': row['temp'],
         'hum': row['hum'],
+        'scd_temp': row['scd_temp'] if 'scd_temp' in row.keys() else None,
+        'scd_hum': row['scd_hum'] if 'scd_hum' in row.keys() else None,
+        'sen_temp': row['sen_temp'] if 'sen_temp' in row.keys() else None,
+        'sen_hum': row['sen_hum'] if 'sen_hum' in row.keys() else None,
         'window_s': row['window_s'],
     }
 
@@ -159,7 +175,7 @@ def get_latest_measurement(device_id: str | None = None) -> dict[str, Any] | Non
             SELECT device_id, host, device_timestamp, received_at, source_id,
                    boot_id, uptime_s, time_valid, time_source,
                    pm1p0, pm2p5, pm4p0, pm10p0,
-                   voc, nox, co2, temp, hum, window_s
+                   voc, nox, co2, temp, hum, scd_temp, scd_hum, sen_temp, sen_hum, window_s
             FROM measurements
             ORDER BY COALESCE(source_id, id) DESC, id DESC
             LIMIT 1
@@ -181,7 +197,7 @@ def measurement_debug_summary(device_id: str | None = None) -> dict[str, Any]:
             SELECT id, device_id, host, device_timestamp, received_at, source_id,
                    boot_id, uptime_s, time_valid, time_source,
                    pm1p0, pm2p5, pm4p0, pm10p0,
-                   voc, nox, co2, temp, hum, window_s
+                   voc, nox, co2, temp, hum, scd_temp, scd_hum, sen_temp, sen_hum, window_s
             FROM measurements
             ORDER BY COALESCE(source_id, id) DESC, id DESC
             LIMIT 1
@@ -250,6 +266,10 @@ def _graph_row(row: sqlite3.Row) -> dict[str, Any]:
         'co2': row['co2'],
         'temp': row['temp'],
         'hum': row['hum'],
+        'scd_temp': row['scd_temp'] if 'scd_temp' in row.keys() else None,
+        'scd_hum': row['scd_hum'] if 'scd_hum' in row.keys() else None,
+        'sen_temp': row['sen_temp'] if 'sen_temp' in row.keys() else None,
+        'sen_hum': row['sen_hum'] if 'sen_hum' in row.keys() else None,
     }
 
 
@@ -389,6 +409,7 @@ def measurements_csv_text(device_id: str | None = None) -> str:
         'id', 'device_id', 'Fecha de medicion', 'Hora de medicion',
         'PM1.0', 'PM2.5', 'PM4.0', 'PM10.0',
         'VOC', 'NOx', 'CO2', 'Temperatura', 'Humedad',
+        'Temperatura SCD40', 'Humedad SCD40', 'Temperatura SEN55', 'Humedad SEN55',
     ]
     writer = csv.DictWriter(output, fieldnames=fieldnames)
     writer.writeheader()
@@ -399,7 +420,7 @@ def measurements_csv_text(device_id: str | None = None) -> str:
             '''
             SELECT id, source_id, device_id, device_timestamp,
                    pm1p0, pm2p5, pm4p0, pm10p0,
-                   voc, nox, co2, temp, hum
+                   voc, nox, co2, temp, hum, scd_temp, scd_hum, sen_temp, sen_hum
             FROM measurements
             ORDER BY COALESCE(source_id, id) ASC, id ASC
             '''
@@ -420,6 +441,10 @@ def measurements_csv_text(device_id: str | None = None) -> str:
                 'CO2': row['co2'],
                 'Temperatura': row['temp'],
                 'Humedad': row['hum'],
+                'Temperatura SCD40': row['scd_temp'],
+                'Humedad SCD40': row['scd_hum'],
+                'Temperatura SEN55': row['sen_temp'],
+                'Humedad SEN55': row['sen_hum'],
             })
 
     return output.getvalue()
@@ -455,6 +480,10 @@ def save_measurement(host: str, row: dict[str, Any]) -> bool:
         'co2': _float_or_none(row.get('co2')),
         'temp': _float_or_none(row.get('temp')),
         'hum': _float_or_none(row.get('hum')),
+        'scd_temp': _float_or_none(row.get('scd_temp')),
+        'scd_hum': _float_or_none(row.get('scd_hum')),
+        'sen_temp': _float_or_none(row.get('sen_temp')),
+        'sen_hum': _float_or_none(row.get('sen_hum')),
         'window_s': _int_or_none(row.get('window_s')),
     }
 
@@ -465,12 +494,12 @@ def save_measurement(host: str, row: dict[str, Any]) -> bool:
                 device_id, host, device_timestamp, received_at, source_id,
                 boot_id, uptime_s, time_valid, time_source,
                 pm1p0, pm2p5, pm4p0, pm10p0,
-                voc, nox, co2, temp, hum, window_s
+                voc, nox, co2, temp, hum, scd_temp, scd_hum, sen_temp, sen_hum, window_s
             ) VALUES (
                 :device_id, :host, :device_timestamp, :received_at, :source_id,
                 :boot_id, :uptime_s, :time_valid, :time_source,
                 :pm1p0, :pm2p5, :pm4p0, :pm10p0,
-                :voc, :nox, :co2, :temp, :hum, :window_s
+                :voc, :nox, :co2, :temp, :hum, :scd_temp, :scd_hum, :sen_temp, :sen_hum, :window_s
             )
             ''',
             values,
@@ -496,6 +525,10 @@ def save_measurement(host: str, row: dict[str, Any]) -> bool:
                     co2 = COALESCE(:co2, co2),
                     temp = COALESCE(:temp, temp),
                     hum = COALESCE(:hum, hum),
+                    scd_temp = COALESCE(:scd_temp, scd_temp),
+                    scd_hum = COALESCE(:scd_hum, scd_hum),
+                    sen_temp = COALESCE(:sen_temp, sen_temp),
+                    sen_hum = COALESCE(:sen_hum, sen_hum),
                     window_s = COALESCE(:window_s, window_s)
                 WHERE device_id = :device_id AND source_id = :source_id
                   AND COALESCE(time_source, '') != 'esp'

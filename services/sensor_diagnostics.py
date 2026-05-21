@@ -8,6 +8,7 @@ from services.esp_client import build_endpoints, fetch_json
 _CO2_LOG_MIN_INTERVAL_S = 60.0
 _last_co2_log: dict[str, tuple[float, str]] = {}
 _last_co2_window_log: dict[str, str] = {}
+_last_temp_hum_log: dict[str, str] = {}
 
 SENSOR_DIAG_LABELS = {
     0: 'OK',
@@ -72,6 +73,28 @@ def _should_print(device_id: str, signature: str, force: bool) -> bool:
         _last_co2_log[device_id] = (now, signature)
         return True
     return False
+
+
+def log_temp_humidity_sources_if_needed(device_id: str, payload: dict[str, Any] | None, *, force: bool = False) -> bool:
+    """Imprime una línea por medición con temp/hum separadas de SCD40 y SEN55."""
+    if not isinstance(payload, dict) or not payload.get('valid'):
+        return False
+    clean_device_id = (device_id or payload.get('device_id') or 'unknown').strip().lower() or 'unknown'
+    measurement_id = str(payload.get('measurement_id') or payload.get('id') or '')
+    signature = measurement_id or f"uptime={payload.get('uptime_s')}|ts={payload.get('timestamp')}"
+    if not force and signature and _last_temp_hum_log.get(clean_device_id) == signature:
+        return False
+    if signature:
+        _last_temp_hum_log[clean_device_id] = signature
+    print(
+        '[ecosensor-temp-hum] '
+        f'{clean_device_id} id={measurement_id or "sin_id"} '
+        f'avg_temp={payload.get("temp")} avg_hum={payload.get("hum")} '
+        f'scd40_temp={payload.get("scd_temp")} scd40_hum={payload.get("scd_hum")} '
+        f'sen55_temp={payload.get("sen_temp")} sen55_hum={payload.get("sen_hum")}',
+        flush=True,
+    )
+    return True
 
 
 async def run_scd40_debug_action(device_id: str, host: str, action: str = 'status') -> dict[str, Any]:
@@ -166,7 +189,8 @@ async def log_co2_diagnostics_if_needed(
         f'scd40_error={sensor_debug.get("scd40_error")} '
         f'raw_co2={sensor_debug.get("scd40_raw_co2")} '
         f'raw_temp={sensor_debug.get("scd40_raw_temp")} raw_hum={sensor_debug.get("scd40_raw_hum")} '
-        f'temp={sensor_debug.get("scd40_last_temp")} hum={sensor_debug.get("scd40_last_hum")} '
+        f'scd40_temp={sensor_debug.get("scd40_last_temp")} scd40_hum={sensor_debug.get("scd40_last_hum")} '
+        f'sen55_temp={sensor_debug.get("sen55_last_temp")} sen55_hum={sensor_debug.get("sen55_last_hum")} '
         f'raw_bytes="{sensor_debug.get("scd40_raw_bytes")}" '
         f'sensores={sensor_debug.get("sensors_state")} '
         f'uptime={data.get("current_uptime_s")} '
