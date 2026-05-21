@@ -7,6 +7,7 @@ from services.esp_client import build_endpoints, fetch_json
 
 _CO2_LOG_MIN_INTERVAL_S = 60.0
 _last_co2_log: dict[str, tuple[float, str]] = {}
+_last_co2_window_log: dict[str, str] = {}
 
 SENSOR_DIAG_LABELS = {
     0: 'OK',
@@ -15,6 +16,8 @@ SENSOR_DIAG_LABELS = {
     3: 'FUERA_DE_RANGO',
     4: 'I2C_TX',
     5: 'I2C_RX',
+    6: 'CO2_ZERO',
+    7: 'CO2_TOO_HIGH',
     99: 'OTRO',
 }
 
@@ -34,10 +37,10 @@ def _diag_label(value: Any) -> str:
 
 
 def _co2_problem_reason(co2: int | None, scd40_ret: int | None, scd40_diag: int | None, valid: bool) -> str | None:
-    if scd40_ret not in (None, 0):
-        return f'scd40_ret={scd40_ret}'
     if scd40_diag not in (None, 0):
         return f'scd40_diag={_diag_label(scd40_diag)}'
+    if scd40_ret not in (None, 0):
+        return f'scd40_ret={scd40_ret}'
     if co2 == 0:
         return 'co2=0'
     if not valid:
@@ -100,26 +103,38 @@ async def log_co2_diagnostics_if_needed(
     scd40_ret = _int_or_none(sensor_debug.get('scd40_ret'))
     scd40_diag = _int_or_none(sensor_debug.get('scd40_diag'))
     reason = _co2_problem_reason(co2, scd40_ret, scd40_diag, valid)
-    if not force and reason is None:
-        return {'ok': True, 'printed': False, 'reason': 'co2_ok', 'diagnostics': data}
+    measurement_id = str(last_reading.get('measurement_id') or source.get('measurement_id') or '')
+    should_print_window = force or bool(measurement_id and _last_co2_window_log.get(clean_device_id) != measurement_id)
+    should_print_alert = reason is not None and _should_print(
+        clean_device_id,
+        f'{reason}|co2={co2}|ret={scd40_ret}|diag={scd40_diag}|sample={sensor_debug.get("sample_slot")}|id={measurement_id}',
+        force,
+    )
 
-    signature = f'{reason}|co2={co2}|ret={scd40_ret}|diag={scd40_diag}|sample={sensor_debug.get("sample_slot")}|id={last_reading.get("measurement_id")}'
-    if _should_print(clean_device_id, signature, force):
-        print(
-            '[ecosensor-co2] '
-            f'{clean_device_id} {"FORZADO" if force else "ALERTA"} '
-            f'reason={reason or "consulta_manual"} '
-            f'co2={co2} valid={valid} '
-            f'scd40_ret={scd40_ret} scd40_diag={scd40_diag}:{_diag_label(scd40_diag)} '
-            f'sample={sensor_debug.get("sample_slot")}/{sensor_debug.get("samples_per_window")} '
-            f'scd40_ok={sensor_debug.get("scd40_ok_count")} '
-            f'sensores={sensor_debug.get("sensors_state")} '
-            f'uptime={data.get("current_uptime_s")} '
-            f'last_sample_uptime={sensor_debug.get("last_sample_uptime_s")} '
-            f'last_measurement_id={last_reading.get("measurement_id")} '
-            f'events={_recent_event_summary(data.get("events"))}',
-            flush=True,
-        )
-        return {'ok': True, 'printed': True, 'reason': reason or 'manual', 'diagnostics': data}
+    if not should_print_window and not should_print_alert:
+        return {'ok': True, 'printed': False, 'reason': reason or 'co2_ok', 'diagnostics': data}
 
-    return {'ok': True, 'printed': False, 'reason': 'throttled', 'diagnostics': data}
+    if measurement_id:
+        _last_co2_window_log[clean_device_id] = measurement_id
+
+    print(
+        '[ecosensor-co2-window] '
+        f'{clean_device_id} {"FORZADO" if force else ("ALERTA" if reason else "OK")} '
+        f'id={measurement_id or "sin_id"} reason={reason or "co2_ok"} '
+        f'co2={co2} valid={valid} '
+        f'sample={sensor_debug.get("sample_slot")}/{sensor_debug.get("samples_per_window")} '
+        f'scd40_ok={sensor_debug.get("scd40_ok_count")} '
+        f'scd40_err={sensor_debug.get("scd40_error_count")} '
+        f'scd40_ret={scd40_ret} scd40_diag={scd40_diag}:{_diag_label(scd40_diag)} '
+        f'scd40_error={sensor_debug.get("scd40_error")} '
+        f'raw_co2={sensor_debug.get("scd40_raw_co2")} '
+        f'raw_temp={sensor_debug.get("scd40_raw_temp")} raw_hum={sensor_debug.get("scd40_raw_hum")} '
+        f'temp={sensor_debug.get("scd40_last_temp")} hum={sensor_debug.get("scd40_last_hum")} '
+        f'raw_bytes="{sensor_debug.get("scd40_raw_bytes")}" '
+        f'sensores={sensor_debug.get("sensors_state")} '
+        f'uptime={data.get("current_uptime_s")} '
+        f'last_sample_uptime={sensor_debug.get("last_sample_uptime_s")} '
+        f'events={_recent_event_summary(data.get("events"))}',
+        flush=True,
+    )
+    return {'ok': True, 'printed': True, 'reason': reason or 'co2_ok', 'diagnostics': data}
