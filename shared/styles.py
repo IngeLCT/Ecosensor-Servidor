@@ -85,8 +85,26 @@ def add_styles() -> None:
         .connect-button { background: #214e78 !important; color: #fff !important; }
         .secondary-button { background: #eef6fb !important; color: #173b57 !important; border: 1px solid #6f9fbd !important; }
         .secondary-button:hover { background: #dceefa !important; }
-        .danger-outline-button { background: #b00020 !important; color: #fff !important; border: 1px solid #7f0018 !important; }
-        .danger-button { background: #b00020 !important; color: #fff !important; border: 1px solid #7f0018 !important; }
+        .q-btn.danger-outline-button,
+        .q-btn.danger-button,
+        .danger-outline-button.bg-primary,
+        .danger-button.bg-primary,
+        .danger-outline-button.bg-negative,
+        .danger-button.bg-negative {
+            background: #b00020 !important;
+            background-color: #b00020 !important;
+            color: #fff !important;
+            border: 1px solid #7f0018 !important;
+        }
+        .q-btn.danger-outline-button .q-btn__content,
+        .q-btn.danger-button .q-btn__content {
+            color: #fff !important;
+        }
+        .q-btn.danger-outline-button:hover,
+        .q-btn.danger-button:hover {
+            background: #8f001a !important;
+            background-color: #8f001a !important;
+        }
         .ota-toggle-button { background: #0f766e !important; color: #fff !important; width: 100%; }
         .ota-panel {
             background: rgba(255, 255, 255, .34);

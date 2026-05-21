@@ -56,8 +56,8 @@ def config_page(request: Request) -> None:
                 ui.label('Mantenimiento').classes('connect-label')
                 ui.label('Acciones disponibles solo desde el equipo servidor. Úsalas con cuidado.').classes('connect-label')
                 with ui.row().classes('justify-center gap-3'):
-                    clear_wifi_button = ui.button('Borrar datos de WiFi').props('unelevated no-caps').classes('danger-outline-button action-button')
-                    clear_history_button = ui.button('Borrar historial de mediciones').props('unelevated no-caps').classes('danger-button action-button')
+                    clear_wifi_button = ui.button('Borrar datos de WiFi').props('unelevated color=negative text-color=white no-caps').classes('danger-outline-button action-button')
+                    clear_history_button = ui.button('Borrar historial de mediciones').props('unelevated color=negative text-color=white no-caps').classes('danger-button action-button')
 
             with ui.element('div').classes('connect-box'):
                 ui.label('Actualización OTA local').classes('connect-label')
