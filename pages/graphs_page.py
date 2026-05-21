@@ -217,6 +217,122 @@ def _add_graph_styles() -> None:
             padding: 8px;
         }
         .data-table-container th { background-color: #80ffd4; }
+
+        @media (max-width: 900px) {
+            .dashboard {
+                width: 100%;
+                padding: 18px 8px 34px !important;
+                overflow-x: hidden;
+            }
+            .top-nav {
+                gap: 6px 8px !important;
+                font-size: 15px !important;
+                line-height: 1.25;
+            }
+            .brand-title { font-size: 24px !important; }
+            .section-title { font-size: 21px !important; }
+            .chart-card {
+                width: calc(100vw - 16px);
+                max-width: calc(100vw - 16px);
+                margin: 18px auto;
+                padding: 12px;
+                overflow-x: auto;
+                overflow-y: hidden;
+                -webkit-overflow-scrolling: touch;
+            }
+            .chart-card .js-plotly-plot,
+            .chart-card .plot-container,
+            .chart-card .svg-container {
+                min-width: 760px !important;
+            }
+            .history-chart-card {
+                height: 620px;
+                max-height: 620px;
+            }
+            .history-chart-card .js-plotly-plot,
+            .history-chart-card .plot-container,
+            .history-chart-card .svg-container {
+                height: 580px !important;
+                max-height: 580px !important;
+            }
+            .agg-toolbar {
+                justify-content: center;
+                gap: 8px;
+            }
+            .agg-toolbar-label,
+            .history-range-label {
+                text-align: center;
+            }
+            .agg-btn {
+                width: 82px;
+                padding: 7px 8px;
+                font-size: 12px !important;
+            }
+            .agg-btn.active {
+                transform: scale(1.10);
+                font-size: 15px !important;
+            }
+            .history-controls {
+                width: calc(100vw - 24px);
+                max-width: calc(100vw - 24px);
+                padding: 12px;
+            }
+            .history-select-label { font-size: 18px; }
+            .data-table-container {
+                max-width: calc(100vw - 16px);
+                overflow-x: auto;
+            }
+            .data-table-container th,
+            .data-table-container td {
+                font-size: 15px;
+                padding: 6px;
+                white-space: nowrap;
+            }
+        }
+
+        @media (max-width: 600px) {
+            .dashboard {
+                padding: 14px 6px 28px !important;
+            }
+            .top-nav {
+                font-size: 13px !important;
+            }
+            .brand-title { font-size: 22px !important; }
+            .section-title { font-size: 19px !important; }
+            .connect-logo {
+                width: 78px !important;
+                height: 78px !important;
+            }
+            .chart-card {
+                width: calc(100vw - 10px);
+                max-width: calc(100vw - 10px);
+                padding: 8px;
+            }
+            .chart-card .js-plotly-plot,
+            .chart-card .plot-container,
+            .chart-card .svg-container {
+                min-width: 720px !important;
+            }
+            .agg-chart-title { font-size: 17px; }
+            .agg-toolbar-label,
+            .history-range-label {
+                font-size: 14px;
+            }
+            .agg-btn {
+                width: 72px;
+                font-size: 11px !important;
+            }
+            .history-chart-card {
+                height: 560px;
+                max-height: 560px;
+            }
+            .history-chart-card .js-plotly-plot,
+            .history-chart-card .plot-container,
+            .history-chart-card .svg-container {
+                height: 520px !important;
+                max-height: 520px !important;
+            }
+        }
         </style>
         '''
     )

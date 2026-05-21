@@ -9,6 +9,7 @@ from typing import Any
 
 from config import DEFAULT_ESP_HOST, DEVICE_ID
 from services.esp_client import build_endpoints, fetch_json_sync, normalize_host_input
+from shared.formatters import device_display_name
 from storage.settings_store import load_settings, save_settings
 
 # Un EcoSensor no debe desaparecer por un fallo puntual de mDNS/red.
@@ -361,7 +362,7 @@ def active_devices() -> list[dict[str, Any]]:
 
 
 def active_device_options() -> dict[str, str]:
-    return {item['device_id']: item['label'] for item in active_devices()}
+    return {item['device_id']: device_display_name(str(item['device_id'])) for item in active_devices()}
 
 
 def probe_failures() -> list[dict[str, Any]]:
