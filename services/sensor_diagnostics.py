@@ -74,6 +74,34 @@ def _should_print(device_id: str, signature: str, force: bool) -> bool:
     return False
 
 
+async def run_scd40_debug_action(device_id: str, host: str, action: str = 'status') -> dict[str, Any]:
+    clean_device_id = (device_id or 'unknown').strip().lower() or 'unknown'
+    clean_action = (action or 'status').strip().lower() or 'status'
+    endpoints = build_endpoints(host)
+    url = endpoints.get('debug_scd40') or ''
+    if not url:
+        return {'ok': False, 'printed': False, 'reason': 'missing_host'}
+    if clean_action != 'status':
+        url = f'{url}?action={clean_action}'
+    result = await fetch_json(url, timeout=15.0 if clean_action == 'selftest' else 5.0)
+    data = result.get('data') if result.get('ok') else None
+    if isinstance(data, dict):
+        print(
+            '[ecosensor-scd40-debug] '
+            f'{clean_device_id} action={clean_action} ok={data.get("ok")} '
+            f'action_ok={data.get("action_ok")} ret={data.get("action_ret")} msg="{data.get("action_message")}" '
+            f'serial={data.get("serial_hex")} variant={data.get("variant")} variant_raw={data.get("variant_raw")} '
+            f'self_test_status={data.get("self_test_status")} '
+            f'co2={data.get("raw_co2")} error={data.get("scd40_error")} diag={data.get("scd40_diag")} '
+            f'ok_count={data.get("scd40_ok_count")} err_count={data.get("scd40_error_count")} '
+            f'raw="{data.get("raw_bytes")}"',
+            flush=True,
+        )
+        return {'ok': True, 'printed': True, 'device_id': clean_device_id, 'host': host, 'action': clean_action, 'diagnostics': data}
+    print(f'[ecosensor-scd40-debug] {clean_device_id} action={clean_action} ERROR status={result.get("status")} data={str(result.get("data"))[:180]}', flush=True)
+    return {'ok': False, 'printed': True, 'device_id': clean_device_id, 'host': host, 'action': clean_action, 'response': result}
+
+
 async def log_co2_diagnostics_if_needed(
     device_id: str,
     host: str,

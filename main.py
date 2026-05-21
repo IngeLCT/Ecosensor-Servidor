@@ -22,7 +22,7 @@ from config import STATIC_DIR, UI_HOST, UI_PORT
 from services.device_registry import active_devices, probe_failures
 from services.measurement_sync import background_sync_loop, debug_device_snapshot
 from services.ota_manager import OtaError, firmware_file_path, load_manifest, ota_snapshot, start_device_ota
-from services.sensor_diagnostics import log_co2_diagnostics_if_needed
+from services.sensor_diagnostics import log_co2_diagnostics_if_needed, run_scd40_debug_action
 from services.sync_debug import sync_debug_snapshot
 from services.mdns_service import start_mdns_service
 from storage.measurements_store import graph_latest_row, graph_rows_history, graph_rows_since, measurements_csv_text
@@ -77,6 +77,22 @@ async def debug_co2(device_id: str = Query(default='ecosensor02')) -> JSONRespon
         'device_id': target,
         'host': host,
         'reason': result.get('reason'),
+    })
+
+
+@app.get('/api/debug/scd40')
+async def debug_scd40(device_id: str = Query(default='ecosensor02'), action: str = Query(default='status')) -> JSONResponse:
+    target = (device_id or 'ecosensor02').strip().lower() or 'ecosensor02'
+    host = next((item['host'] for item in active_devices() if item.get('device_id') == target), f'{target}.local')
+    result = await run_scd40_debug_action(target, str(host), action)
+    return JSONResponse({
+        'ok': bool(result.get('ok')),
+        'printed': bool(result.get('printed')),
+        'device_id': target,
+        'host': host,
+        'action': action,
+        'diagnostics': result.get('diagnostics'),
+        'error': result.get('reason') or result.get('response'),
     })
 
 
