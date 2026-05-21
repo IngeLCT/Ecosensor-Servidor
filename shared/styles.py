@@ -104,6 +104,7 @@ def add_styles() -> None:
         .dashboard-link {
             color: #132f4c !important;
             font-weight: 900 !important;
+            font-size: 20px;
             text-decoration: underline;
         }
         .dashboard {
@@ -119,7 +120,7 @@ def add_styles() -> None:
             justify-content: center;
             gap: 10px 18px;
             margin-bottom: 18px;
-            font-size: 18px;
+            font-size: 20px;
             font-weight: 700;
         }
         .brand-title { color: rgb(4, 87, 9); font-size: 28px; font-weight: 700; }
