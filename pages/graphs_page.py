@@ -1,7 +1,7 @@
 import asyncio
 import math
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from nicegui import app, ui
@@ -15,7 +15,9 @@ from storage.measurements_store import graph_rows_all, graph_rows_history
 MAX_BARS = 24
 INITIAL_FETCH_LIMIT = 5000
 SAMPLE_BASE_MIN = 5
-SERVER_REFRESH_SECONDS = 60.0
+REALTIME_RETRY_SECONDS = 30.0
+REALTIME_REFRESH_GRACE_SECONDS = 12.0
+REALTIME_MAX_WAIT_SECONDS = 360.0
 MENU = [
     ('5 min', 5),
     ('15 min', 15),
@@ -386,7 +388,7 @@ def _fmt_label(ts: Any) -> str:
 def _short_date_label(date_part: str) -> str:
     parts = date_part.split('-')
     if len(parts) == 3:
-        return f'{parts[2]}/{parts[1]}'
+        return f'{parts[2]}/{parts[1]}/{parts[0][-2:]}'
     return date_part
 
 
@@ -400,7 +402,7 @@ def _tick_text(labels: list[str], minutes: int) -> list[str]:
         date_part, time_part = label.split(' ', 1)
         display = time_part[:5]
         if date_part != last_date:
-            display = f'{display}<br><span style="font-size:11px">{_short_date_label(date_part)}</span>'
+            display = f'{_short_date_label(date_part)}-{display}'
             last_date = date_part
         out.append(display)
     return out
@@ -448,6 +450,32 @@ def _series_data(frame: Any, spec: ChartSpec, minutes: int) -> tuple[list[str], 
         values.append(None)
 
     return labels, values
+
+
+def _seconds_until_next_realtime_refresh(frame: Any | None) -> float:
+    """Calcula cuándo conviene revisar una nueva medición de tiempo real.
+
+    El firmware genera una medición/promedio cada SAMPLE_BASE_MIN minutos. En vez
+    de consultar cada 60 s, esperamos hasta la siguiente ventana estimada y damos
+    un pequeño margen para que el ESP32 guarde y el servidor pueda sincronizar.
+    """
+    if frame is None or getattr(frame, 'empty', True) or '_dt' not in frame:
+        return REALTIME_RETRY_SECONDS
+
+    try:
+        last_dt = frame['_dt'].max()
+        if hasattr(last_dt, 'to_pydatetime'):
+            last_dt = last_dt.to_pydatetime()
+        if getattr(last_dt, 'tzinfo', None) is not None:
+            last_dt = last_dt.replace(tzinfo=None)
+        next_dt = last_dt + timedelta(minutes=SAMPLE_BASE_MIN)
+        delay = (next_dt - datetime.now()).total_seconds() + REALTIME_REFRESH_GRACE_SECONDS
+    except Exception:
+        return REALTIME_RETRY_SECONDS
+
+    if delay <= 0:
+        return REALTIME_RETRY_SECONDS
+    return min(max(delay, REALTIME_RETRY_SECONDS), REALTIME_MAX_WAIT_SECONDS)
 
 
 def _build_figure(frame: Any, spec: ChartSpec, minutes: int) -> Any:
@@ -524,6 +552,7 @@ def _graph_page(page_title: str, charts: list[ChartSpec]) -> None:
     buttons: dict[str, list[Any]] = {spec.key: [] for spec in charts}
     frame_cache: Any | None = None
     selected_device_id: str | None = None
+    refresh_running = False
 
     with ui.element('div').classes('dashboard'):
         _nav()
@@ -586,22 +615,33 @@ def _graph_page(page_title: str, charts: list[ChartSpec]) -> None:
                 app.storage.user.pop('selected_device_id', None)
         id_label.set_text(f'ID: {selected_device_id or "-"}')
 
-    async def refresh() -> None:
-        nonlocal frame_cache
-        await refresh_sensor_options()
-        if not selected_device_id:
-            status.set_text('No hay EcoSensor activos disponibles.')
-            return
-        frame, error = await _load_frame(selected_device_id)
-        if error:
-            status.set_text(error)
-            return
-        frame_cache = frame
-        status.set_text('')
-        for spec in charts:
-            await redraw_one(spec)
+    def schedule_next_refresh(delay_seconds: float) -> None:
+        ui.timer(delay_seconds, refresh, once=True)
 
-    ui.timer(SERVER_REFRESH_SECONDS, refresh)
+    async def refresh() -> None:
+        nonlocal frame_cache, refresh_running
+        if refresh_running:
+            return
+        refresh_running = True
+        next_delay = REALTIME_RETRY_SECONDS
+        try:
+            await refresh_sensor_options()
+            if not selected_device_id:
+                status.set_text('No hay EcoSensor activos disponibles.')
+                return
+            frame, error = await _load_frame(selected_device_id)
+            if error:
+                status.set_text(error)
+                return
+            frame_cache = frame
+            status.set_text('')
+            for spec in charts:
+                await redraw_one(spec)
+            next_delay = _seconds_until_next_realtime_refresh(frame_cache)
+        finally:
+            refresh_running = False
+            schedule_next_refresh(next_delay)
+
     ui.timer(0.1, refresh, once=True)
 
 
@@ -711,7 +751,7 @@ def _history_category_ticks(labels: list[str], minutes: int) -> tuple[list[int],
             continue
         base = time_part[:5]
         if date_part != previous_date:
-            ticktext.append(f'{base}<br><span style="font-size:11px">{_short_date_label(date_part)}</span>')
+            ticktext.append(f'{_short_date_label(date_part)}-{base}')
             previous_date = date_part
         else:
             ticktext.append(base)
