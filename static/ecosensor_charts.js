@@ -71,6 +71,10 @@
     return `${fmtDate(binStartMs)} ${fmtTime(binStartMs)}`;
   }
   function buildTickText(labels, minutes) {
+    const formatDateTime = (date, time) => {
+      const [yyyy, mm, dd] = String(date || '').split('-');
+      return `${dd}/${mm}/${yyyy}-${time}`;
+    };
     const items = labels.map(s => {
       const str = String(s || '');
       const m = str.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})/);
@@ -80,11 +84,11 @@
     let stamped = false;
     for (let i = 1; i < items.length; i++) {
       if (items[i].date && items[i - 1].date && items[i].date !== items[i - 1].date) {
-        out[i - 1] = `${items[i - 1].time}\n${items[i].date.split('-').reverse().join('-')}`;
+        out[i - 1] = formatDateTime(items[i - 1].date, items[i - 1].time);
         stamped = true;
       }
     }
-    if (!stamped && items[0] && items[0].date) out[0] = `${items[0].time}\n${items[0].date.split('-').reverse().join('-')}`;
+    if (!stamped && items[0] && items[0].date) out[0] = formatDateTime(items[0].date, items[0].time);
     return out;
   }
   function getLast24RawForKey(key) {
