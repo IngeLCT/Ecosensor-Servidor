@@ -130,7 +130,7 @@ def download_measurements_csv(device_id: str | None = Query(default=None)) -> Re
     return Response(
         content=measurements_csv_text(device_id),
         media_type='text/csv; charset=utf-8',
-        headers={'Content-Disposition': f'attachment; filename="ecosensor_mediciones_{filename_id}.csv"'},
+        headers={'Content-Disposition': f'attachment; filename="{filename_id}_mediciones.csv"'},
     )
 
 
