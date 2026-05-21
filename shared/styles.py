@@ -94,6 +94,13 @@ def add_styles() -> None:
             border-radius: 10px;
             padding: 12px;
         }
+        .ota-auto-info {
+            color: #0f5132 !important;
+            background: rgba(209, 250, 229, .7);
+            border: 1px solid rgba(15, 118, 110, .28);
+            border-radius: 8px;
+            padding: 8px 10px;
+        }
         .dashboard-link {
             color: #132f4c !important;
             font-weight: 900 !important;

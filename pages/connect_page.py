@@ -67,6 +67,7 @@ def config_page(request: Request) -> None:
                 with ota_panel:
                     ui.label('El servidor ordena al EcoSensor descargar su .bin desde esta red local.').classes('connect-label')
                     refresh_ota_button = ui.button('Actualizar estado OTA').props('unelevated no-caps').classes('secondary-button action-button w-full')
+                    ota_auto_info = ui.label('').classes('connect-label ota-auto-info')
                     ota_container = ui.column().classes('w-full gap-2')
 
     async def refresh_sensor_options() -> None:
@@ -175,6 +176,8 @@ def config_page(request: Request) -> None:
                 ui.button('Borrar historial', on_click=confirm).props('unelevated color=negative')
         dialog.open()
 
+    ota_auto_refresh = {'remaining': 0, 'device_id': ''}
+
     async def refresh_ota_status() -> None:
         ota_container.clear()
         snapshot = await ota_snapshot()
@@ -208,7 +211,8 @@ def config_page(request: Request) -> None:
                     async def update_device(did: str = device_id) -> None:
                         result = await start_device_ota(did)
                         if result.get('ok'):
-                            ui.notify(f'OTA iniciada para {did}.', color='positive')
+                            ui.notify(f'OTA iniciada para {did}. Actualizando estado automáticamente.', color='positive')
+                            start_ota_auto_refresh(did)
                         else:
                             ui.notify(f'No se pudo iniciar OTA para {did}: {result.get("error")}', color='negative')
                         await refresh_ota_status()
@@ -225,6 +229,39 @@ def config_page(request: Request) -> None:
         else:
             app.storage.user.pop('selected_device_id', None)
         await refresh_sensor_options()
+
+    def start_ota_auto_refresh(device_id: str) -> None:
+        ota_auto_refresh['remaining'] = 60
+        ota_auto_refresh['device_id'] = device_id
+        ota_auto_info.set_text(f'Actualizando estado OTA de {device_id} automáticamente cada 2 s...')
+        if not ota_panel.visible:
+            ota_panel.visible = True
+            ota_panel.update()
+            ota_toggle_button.set_text('Ocultar opciones OTA')
+        ota_auto_timer.activate()
+
+    async def auto_refresh_ota_status() -> None:
+        remaining = int(ota_auto_refresh.get('remaining') or 0)
+        device_id = str(ota_auto_refresh.get('device_id') or '')
+        if remaining <= 0:
+            ota_auto_timer.deactivate()
+            ota_auto_info.set_text('')
+            return
+        if not ota_panel.visible:
+            ota_auto_timer.deactivate()
+            return
+
+        await refresh_ota_status()
+        remaining -= 1
+        ota_auto_refresh['remaining'] = remaining
+        if remaining <= 0:
+            ota_auto_timer.deactivate()
+            ota_auto_info.set_text('')
+        else:
+            seconds_left = remaining * 2
+            ota_auto_info.set_text(f'Actualizando estado OTA de {device_id} automáticamente cada 2 s ({seconds_left} s restantes)...')
+
+    ota_auto_timer = ui.timer(2.0, auto_refresh_ota_status, active=False)
 
     sensor_select.on_value_change(on_sensor_change)
     async def toggle_ota_panel() -> None:
