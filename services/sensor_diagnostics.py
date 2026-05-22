@@ -101,7 +101,7 @@ def log_temp_humidity_sources_if_needed(device_id: str, payload: dict[str, Any] 
     return PRINT_TEMP_HUM_SOURCE_LOG
 
 
-async def run_scd40_debug_action(device_id: str, host: str, action: str = 'status') -> dict[str, Any]:
+async def run_scd40_debug_action(device_id: str, host: str, action: str = 'status', offset: float | None = None) -> dict[str, Any]:
     clean_device_id = (device_id or 'unknown').strip().lower() or 'unknown'
     clean_action = (action or 'status').strip().lower() or 'status'
     endpoints = build_endpoints(host)
@@ -110,6 +110,8 @@ async def run_scd40_debug_action(device_id: str, host: str, action: str = 'statu
         return {'ok': False, 'printed': False, 'reason': 'missing_host'}
     if clean_action != 'status':
         url = f'{url}?action={clean_action}'
+        if clean_action == 'set_offset' and offset is not None:
+            url = f'{url}&offset={offset:.3f}'
     result = await fetch_json(url, timeout=15.0 if clean_action == 'selftest' else 5.0)
     data = result.get('data') if result.get('ok') else None
     if isinstance(data, dict):

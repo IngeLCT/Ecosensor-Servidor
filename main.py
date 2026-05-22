@@ -81,10 +81,14 @@ async def debug_co2(device_id: str = Query(default='ecosensor02')) -> JSONRespon
 
 
 @app.get('/api/debug/scd40')
-async def debug_scd40(device_id: str = Query(default='ecosensor02'), action: str = Query(default='status')) -> JSONResponse:
+async def debug_scd40(
+    device_id: str = Query(default='ecosensor02'),
+    action: str = Query(default='status'),
+    offset: float | None = Query(default=None),
+) -> JSONResponse:
     target = (device_id or 'ecosensor02').strip().lower() or 'ecosensor02'
     host = next((item['host'] for item in active_devices() if item.get('device_id') == target), f'{target}.local')
-    result = await run_scd40_debug_action(target, str(host), action)
+    result = await run_scd40_debug_action(target, str(host), action, offset)
     return JSONResponse({
         'ok': bool(result.get('ok')),
         'printed': bool(result.get('printed')),
