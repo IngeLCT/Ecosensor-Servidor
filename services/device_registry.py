@@ -22,6 +22,7 @@ DISCOVERY_CONCURRENCY = 64
 LAN_SCAN_ENABLED = True
 LAN_SCAN_TIMEOUT_SECONDS = 0.25
 _DEVICE_RE = re.compile(r'^(ecosensor\d+)(?:\.local)?(?::\d+)?$', re.IGNORECASE)
+_REAL_DEVICE_RE = re.compile(r'^ecosensor(0[1-9]|1[0-2])$', re.IGNORECASE)
 
 _active_devices: dict[str, dict[str, Any]] = {}
 _probe_failures: dict[str, dict[str, Any]] = {}
@@ -122,6 +123,10 @@ async def _scan_http_hosts(hosts: list[str], timeout: float) -> list[str]:
     return [host for host in found if host]
 
 
+def _is_real_ecosensor_id(device_id: str | None) -> bool:
+    return bool(_REAL_DEVICE_RE.match(str(device_id or '').strip().lower()))
+
+
 def _status_device_id(status_data: dict[str, Any] | None) -> str | None:
     if not isinstance(status_data, dict):
         return None
@@ -129,7 +134,7 @@ def _status_device_id(status_data: dict[str, Any] | None) -> str | None:
     if raw is None:
         return None
     value = str(raw).strip().lower()
-    return value or None
+    return value if _is_real_ecosensor_id(value) else None
 
 
 def _status_ip(status_data: dict[str, Any] | None) -> str | None:
@@ -142,14 +147,16 @@ def _status_ip(status_data: dict[str, Any] | None) -> str | None:
 def device_id_from_host(host: str) -> str:
     clean = normalize_host_input(host)
     if not clean:
-        return DEVICE_ID
+        return ''
     base = clean.split(':', 1)[0]
     match = _DEVICE_RE.match(base)
     if match:
-        return match.group(1).lower()
+        candidate = match.group(1).lower()
+        return candidate if _is_real_ecosensor_id(candidate) else ''
     if base.endswith('.local'):
         base = base[:-6]
-    return base.lower() or DEVICE_ID
+    candidate = base.lower()
+    return candidate if _is_real_ecosensor_id(candidate) else ''
 
 
 def _settings_device_hosts(settings: dict[str, Any]) -> dict[str, str]:
@@ -160,7 +167,7 @@ def _settings_device_hosts(settings: dict[str, Any]) -> dict[str, str]:
     for key, value in raw.items():
         device_id = str(key or '').strip().lower()
         host = normalize_host_input(str(value or ''))
-        if device_id and host:
+        if _is_real_ecosensor_id(device_id) and host:
             out[device_id] = host
     return out
 
@@ -330,6 +337,8 @@ def remember_host(host: str, device_id: str | None = None) -> None:
         hosts.append(host)
 
     resolved_device_id = (device_id or device_id_from_host(host) or DEVICE_ID).strip().lower()
+    if not _is_real_ecosensor_id(resolved_device_id):
+        return
     device_hosts = _settings_device_hosts(settings)
     device_hosts[resolved_device_id] = host
 
@@ -340,9 +349,12 @@ def remember_host(host: str, device_id: str | None = None) -> None:
     save_settings(settings)
 
 
-def _mark_active(host: str, status_data: dict[str, Any] | None = None, device_id: str | None = None, latency_ms: int | None = None) -> dict[str, Any]:
+def _mark_active(host: str, status_data: dict[str, Any] | None = None, device_id: str | None = None, latency_ms: int | None = None) -> dict[str, Any] | None:
     host = normalize_host_input(host)
     resolved_device_id = (device_id or _status_device_id(status_data) or device_id_from_host(host) or DEVICE_ID).strip().lower()
+    if not _is_real_ecosensor_id(resolved_device_id):
+        _mark_probe_failure(host, f'device_id no permitido: {resolved_device_id}')
+        return None
     entry = {
         'device_id': resolved_device_id,
         'host': host,
@@ -397,6 +409,9 @@ def _prune_expired() -> None:
 
 def active_devices() -> list[dict[str, Any]]:
     _prune_expired()
+    for device_id in list(_active_devices):
+        if not _is_real_ecosensor_id(device_id):
+            _active_devices.pop(device_id, None)
     return sorted(_active_devices.values(), key=lambda item: item.get('device_id') or '')
 
 
@@ -451,9 +466,16 @@ async def probe_host(host: str, timeout: float = CONFIGURED_PROBE_TIMEOUT_SECOND
         _mark_probe_failure(host, status.get('data'))
         return None
 
-    resolved_device_id = _status_device_id(status_data) or device_id_from_host(host)
+    resolved_device_id = _status_device_id(status_data)
+    if not resolved_device_id:
+        raw_device_id = status_data.get('device_id') or status_data.get('id')
+        _mark_probe_failure(host, f'no es EcoSensor real: device_id={raw_device_id!r}')
+        return None
+
     reachable_host = _status_ip(status_data) or request_host
     entry = _mark_active(reachable_host, status_data, resolved_device_id, latency_ms)
+    if not entry:
+        return None
     remember_host(reachable_host, entry['device_id'])
     return entry
 
