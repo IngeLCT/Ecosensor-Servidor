@@ -21,6 +21,10 @@ from nicegui import app, ui
 from config import STATIC_DIR, UI_HOST, UI_PORT
 from services.device_registry import active_devices, probe_failures
 from services.measurement_sync import background_sync_loop, debug_device_snapshot
+from services.offset_capture import add_sample as add_offset_capture_sample
+from services.offset_capture import file_path_for as offset_capture_file_path
+from services.offset_capture import snapshot as offset_capture_snapshot
+from services.offset_capture import start_capture as start_offset_capture
 from services.ota_manager import OtaError, firmware_file_path, load_manifest, ota_snapshot, start_device_ota
 from services.sensor_diagnostics import log_co2_diagnostics_if_needed, run_scd40_debug_action
 from services.sync_debug import sync_debug_snapshot
@@ -130,7 +134,30 @@ async def debug_temp_hum_sample(request: Request) -> JSONResponse:
         f'sen55_offset_raw={payload.get("sen55_offset_raw")}',
         flush=True,
     )
-    return JSONResponse({'ok': True, 'debug': 'temp_hum_sample_printed'})
+    capture = add_offset_capture_sample(payload)
+    return JSONResponse({'ok': True, 'debug': 'temp_hum_sample_printed', 'capture': capture})
+
+
+@app.post('/api/debug/offset-capture/start')
+async def api_offset_capture_start(device_id: str = Query(...)) -> JSONResponse:
+    target = (device_id or '').strip().lower()
+    if not target:
+        return JSONResponse({'ok': False, 'error': 'device_id_required'}, status_code=400)
+    return JSONResponse({'ok': True, 'capture': start_offset_capture(target)})
+
+
+@app.get('/api/debug/offset-capture/status')
+async def api_offset_capture_status() -> JSONResponse:
+    return JSONResponse({'ok': True, 'capture': offset_capture_snapshot()})
+
+
+@app.get('/api/debug/offset-capture/download')
+def api_offset_capture_download(device_id: str = Query(...)):
+    try:
+        path = offset_capture_file_path(device_id)
+    except FileNotFoundError:
+        return JSONResponse({'ok': False, 'error': 'offset_capture_not_found'}, status_code=404)
+    return FileResponse(path, media_type='text/csv; charset=utf-8', filename=path.name)
 
 
 @app.get('/api/ota/devices')

@@ -6,6 +6,8 @@ from nicegui import app, ui
 from services.device_registry import active_device_options, ensure_active_devices, ensure_device_active, forget_device, host_for_device, probe_host, registry_revision, remember_host
 from services.esp_client import build_endpoints, delete_json, sync_time_if_needed
 from services.ota_manager import ota_snapshot, start_device_ota
+from services.offset_capture import snapshot as offset_capture_snapshot
+from services.offset_capture import start_capture as start_offset_capture
 from shared.formatters import device_display_name
 from shared.styles import add_styles
 from storage.measurements_store import clear_measurements
@@ -52,6 +54,15 @@ def config_page(request: Request) -> None:
                     refresh_button = ui.button('Actualizar lista').props('unelevated no-caps').classes('secondary-button action-button')
                     connect_button = ui.button('Sincronizar hora').props('unelevated no-caps').classes('connect-button action-button')
                 ui.button('Ir al dashboard', on_click=lambda: ui.navigate.to('/dashboard')).props('flat no-caps').classes('dashboard-link')
+
+            with ui.element('div').classes('connect-box'):
+                ui.label('Captura para offset').classes('connect-label')
+                ui.label('Guarda 241 muestras temp/hum del log [ecosensor-temp-hum-sample] en CSV.').classes('connect-label')
+                offset_status_label = ui.label('Sin captura activa.').classes('connect-label')
+                offset_progress = ui.linear_progress(value=0).classes('w-full')
+                offset_download_button = ui.button('Descargar CSV', icon='download').props('unelevated no-caps').classes('secondary-button action-button w-full')
+                offset_download_button.disable()
+                offset_start_button = ui.button('Iniciar captura CSV de offset').props('unelevated no-caps').classes('connect-button action-button w-full')
 
             with ui.element('div').classes('connect-box'):
                 ui.label('Mantenimiento').classes('connect-label')
@@ -181,6 +192,58 @@ def config_page(request: Request) -> None:
 
                 ui.button('Borrar historial', on_click=confirm).props('unelevated color=negative')
         dialog.open()
+
+    offset_capture_auto_download = {'done': False, 'device_id': ''}
+
+    def _offset_download_url(capture: dict[str, Any] | None = None) -> str:
+        data = capture or offset_capture_snapshot()
+        device_id = str(data.get('device_id') or selected_device_id or '').strip().lower()
+        return f'/api/debug/offset-capture/download?device_id={device_id}' if device_id else ''
+
+    async def start_offset_csv_capture() -> None:
+        device_id, _host = await selected_host()
+        if not device_id:
+            return
+        capture = start_offset_capture(device_id)
+        offset_capture_auto_download['done'] = False
+        offset_capture_auto_download['device_id'] = device_id
+        offset_progress.set_value(0)
+        offset_download_button.disable()
+        offset_status_label.set_text(f'Capturando {device_display_name(device_id)}: 0/{capture.get("target", 241)} muestras.')
+        ui.notify(f'Captura CSV iniciada para {device_display_name(device_id)}.', color='positive')
+
+    async def refresh_offset_capture_status() -> None:
+        capture = offset_capture_snapshot()
+        count = int(capture.get('count') or 0)
+        target = int(capture.get('target') or 241)
+        progress = float(capture.get('progress') or 0.0)
+        device_id = str(capture.get('device_id') or '')
+        offset_progress.set_value(progress)
+
+        if capture.get('active'):
+            offset_status_label.set_text(f'Capturando {device_display_name(device_id)}: {count}/{target} muestras.')
+            offset_download_button.disable()
+            offset_capture_auto_download['done'] = False
+            return
+
+        if capture.get('complete'):
+            offset_status_label.set_text(f'CSV listo: {capture.get("filename")} ({count}/{target} muestras).')
+            offset_download_button.enable()
+            if not offset_capture_auto_download.get('done'):
+                offset_capture_auto_download['done'] = True
+                url = _offset_download_url(capture)
+                if url:
+                    ui.download(url)
+                    ui.notify('CSV de offset listo. Iniciando descarga.', color='positive')
+            return
+
+        offset_status_label.set_text('Sin captura activa.')
+        offset_download_button.disable()
+
+    def download_offset_csv() -> None:
+        url = _offset_download_url()
+        if url:
+            ui.download(url)
 
     ota_auto_refresh = {'remaining': 0, 'device_id': ''}
     ota_cards: dict[str, dict[str, Any]] = {}
@@ -349,5 +412,9 @@ def config_page(request: Request) -> None:
     connect_button.on('click', connect)
     clear_wifi_button.on('click', clear_wifi)
     clear_history_button.on('click', clear_history)
+    offset_start_button.on('click', start_offset_csv_capture)
+    offset_download_button.on('click', download_offset_csv)
     ui.timer(1.0, refresh_options_if_registry_changed)
+    ui.timer(1.0, refresh_offset_capture_status)
     ui.timer(0.1, refresh_sensor_options, once=True)
+    ui.timer(0.2, refresh_offset_capture_status, once=True)
