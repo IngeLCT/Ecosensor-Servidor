@@ -117,10 +117,13 @@ async def debug_temp_hum_sample(request: Request) -> JSONResponse:
         f'{device_id} '
         f'sample={payload.get("sample_slot")} '
         f'uptime_s={payload.get("uptime_s")} '
-        f'scd_ret={payload.get("scd_ret")} sen_ret={payload.get("sen_ret")} '
+        f'scd_ret={payload.get("scd_ret")} scd_diag={payload.get("scd_diag")} sen_ret={payload.get("sen_ret")} '
         f'scd40_temp={payload.get("scd_temp")} scd40_hum={payload.get("scd_hum")} '
         f'sen55_temp={payload.get("sen_temp")} sen55_hum={payload.get("sen_hum")} '
-        f'avg_temp={payload.get("avg_temp")} avg_hum={payload.get("avg_hum")}',
+        f'avg_temp={payload.get("avg_temp")} avg_hum={payload.get("avg_hum")} '
+        f'scd40_offset_valid={payload.get("scd_temp_offset_valid")} '
+        f'scd40_offset={payload.get("scd_temp_offset")} '
+        f'scd40_offset_raw={payload.get("scd_temp_offset_raw")}',
         flush=True,
     )
     return JSONResponse({'ok': True, 'debug': 'temp_hum_sample_printed'})
