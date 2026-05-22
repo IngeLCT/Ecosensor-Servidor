@@ -105,7 +105,7 @@ async def debug_temp_hum_sample(request: Request) -> JSONResponse:
     """Endpoint temporal de debug: recibe una muestra cruda del ESP32 y solo la imprime.
 
     No guarda en SQLite ni participa en las gráficas. Retirar cuando termine el diagnóstico
-    de temperatura/humedad SCD40 vs SEN55.
+    de temperatura/humedad SCD40 vs. SEN55.
     """
     try:
         payload = await request.json()
