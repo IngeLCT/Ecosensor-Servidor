@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 MAX_EVENTS = 80
+PRINT_SYNC_EVENTS = False  # Debug temporal: mantener consola limpia; /api/debug/sync conserva eventos.
 
 _sync_events: deque[dict[str, Any]] = deque(maxlen=MAX_EVENTS)
 _last_by_device: dict[str, dict[str, Any]] = {}
@@ -73,7 +74,7 @@ def record_sync_event(device_id: str, event: str, **details: Any) -> dict[str, A
 
     # Debug operativo: queda en la consola del servidor, no en la UI.
     # Se imprime solo lo esencial; /api/debug/sync conserva los eventos recientes.
-    if _should_print_sync_event(event, details):
+    if PRINT_SYNC_EVENTS and _should_print_sync_event(event, details):
         compact = ' '.join(
             f'{key}={value}'
             for key, value in payload.items()

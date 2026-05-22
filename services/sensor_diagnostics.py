@@ -9,6 +9,9 @@ _CO2_LOG_MIN_INTERVAL_S = 60.0
 _last_co2_log: dict[str, tuple[float, str]] = {}
 _last_co2_window_log: dict[str, str] = {}
 _last_temp_hum_log: dict[str, str] = {}
+PRINT_TEMP_HUM_SOURCE_LOG = False  # Se deja activo solo /api/debug/temp-hum-sample en main.py.
+PRINT_SCD40_DEBUG_LOG = False
+PRINT_CO2_DIAGNOSTICS_LOG = False
 
 SENSOR_DIAG_LABELS = {
     0: 'OK',
@@ -86,15 +89,16 @@ def log_temp_humidity_sources_if_needed(device_id: str, payload: dict[str, Any] 
         return False
     if signature:
         _last_temp_hum_log[clean_device_id] = signature
-    print(
-        '[ecosensor-temp-hum] '
-        f'{clean_device_id} id={measurement_id or "sin_id"} '
-        f'avg_temp={payload.get("temp")} avg_hum={payload.get("hum")} '
-        f'scd40_temp={payload.get("scd_temp")} scd40_hum={payload.get("scd_hum")} '
-        f'sen55_temp={payload.get("sen_temp")} sen55_hum={payload.get("sen_hum")}',
-        flush=True,
-    )
-    return True
+    if PRINT_TEMP_HUM_SOURCE_LOG:
+        print(
+            '[ecosensor-temp-hum] '
+            f'{clean_device_id} id={measurement_id or "sin_id"} '
+            f'avg_temp={payload.get("temp")} avg_hum={payload.get("hum")} '
+            f'scd40_temp={payload.get("scd_temp")} scd40_hum={payload.get("scd_hum")} '
+            f'sen55_temp={payload.get("sen_temp")} sen55_hum={payload.get("sen_hum")}',
+            flush=True,
+        )
+    return PRINT_TEMP_HUM_SOURCE_LOG
 
 
 async def run_scd40_debug_action(device_id: str, host: str, action: str = 'status') -> dict[str, Any]:
@@ -109,20 +113,22 @@ async def run_scd40_debug_action(device_id: str, host: str, action: str = 'statu
     result = await fetch_json(url, timeout=15.0 if clean_action == 'selftest' else 5.0)
     data = result.get('data') if result.get('ok') else None
     if isinstance(data, dict):
-        print(
-            '[ecosensor-scd40-debug] '
-            f'{clean_device_id} action={clean_action} ok={data.get("ok")} '
-            f'action_ok={data.get("action_ok")} ret={data.get("action_ret")} msg="{data.get("action_message")}" '
-            f'serial={data.get("serial_hex")} variant={data.get("variant")} variant_raw={data.get("variant_raw")} '
-            f'self_test_status={data.get("self_test_status")} '
-            f'co2={data.get("raw_co2")} error={data.get("scd40_error")} diag={data.get("scd40_diag")} '
-            f'ok_count={data.get("scd40_ok_count")} err_count={data.get("scd40_error_count")} '
-            f'raw="{data.get("raw_bytes")}"',
-            flush=True,
-        )
-        return {'ok': True, 'printed': True, 'device_id': clean_device_id, 'host': host, 'action': clean_action, 'diagnostics': data}
-    print(f'[ecosensor-scd40-debug] {clean_device_id} action={clean_action} ERROR status={result.get("status")} data={str(result.get("data"))[:180]}', flush=True)
-    return {'ok': False, 'printed': True, 'device_id': clean_device_id, 'host': host, 'action': clean_action, 'response': result}
+        if PRINT_SCD40_DEBUG_LOG:
+            print(
+                '[ecosensor-scd40-debug] '
+                f'{clean_device_id} action={clean_action} ok={data.get("ok")} '
+                f'action_ok={data.get("action_ok")} ret={data.get("action_ret")} msg="{data.get("action_message")}" '
+                f'serial={data.get("serial_hex")} variant={data.get("variant")} variant_raw={data.get("variant_raw")} '
+                f'self_test_status={data.get("self_test_status")} '
+                f'co2={data.get("raw_co2")} error={data.get("scd40_error")} diag={data.get("scd40_diag")} '
+                f'ok_count={data.get("scd40_ok_count")} err_count={data.get("scd40_error_count")} '
+                f'raw="{data.get("raw_bytes")}"',
+                flush=True,
+            )
+        return {'ok': True, 'printed': PRINT_SCD40_DEBUG_LOG, 'device_id': clean_device_id, 'host': host, 'action': clean_action, 'diagnostics': data}
+    if PRINT_SCD40_DEBUG_LOG:
+        print(f'[ecosensor-scd40-debug] {clean_device_id} action={clean_action} ERROR status={result.get("status")} data={str(result.get("data"))[:180]}', flush=True)
+    return {'ok': False, 'printed': PRINT_SCD40_DEBUG_LOG, 'device_id': clean_device_id, 'host': host, 'action': clean_action, 'response': result}
 
 
 async def log_co2_diagnostics_if_needed(
@@ -141,9 +147,9 @@ async def log_co2_diagnostics_if_needed(
     diagnostics = await fetch_json(endpoints['diagnostics'], timeout=3.0)
     data = diagnostics.get('data') if diagnostics.get('ok') else None
     if not isinstance(data, dict):
-        if force:
+        if force and PRINT_CO2_DIAGNOSTICS_LOG:
             print(f"[ecosensor-co2] {clean_device_id} ERROR diagnostics_ok={diagnostics.get('ok')} status={diagnostics.get('status')} data={str(diagnostics.get('data'))[:180]}", flush=True)
-        return {'ok': False, 'printed': force, 'reason': 'diagnostics_unavailable', 'diagnostics': diagnostics}
+        return {'ok': False, 'printed': force and PRINT_CO2_DIAGNOSTICS_LOG, 'reason': 'diagnostics_unavailable', 'diagnostics': diagnostics}
 
     last_reading = data.get('last_reading') if isinstance(data.get('last_reading'), dict) else {}
     sensor_debug = data.get('sensor_debug') if isinstance(data.get('sensor_debug'), dict) else {}
@@ -171,7 +177,7 @@ async def log_co2_diagnostics_if_needed(
         force,
     )
 
-    if not should_print_window and not should_print_alert:
+    if (not PRINT_CO2_DIAGNOSTICS_LOG) or (not should_print_window and not should_print_alert):
         return {'ok': True, 'printed': False, 'reason': reason or 'co2_ok', 'diagnostics': data}
 
     if measurement_id:
