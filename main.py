@@ -14,7 +14,7 @@ from services.windows_asyncio import install_connection_reset_filter, install_wi
 
 install_windows_selector_policy()
 
-from fastapi import Query
+from fastapi import Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from nicegui import app, ui
 
@@ -94,6 +94,36 @@ async def debug_scd40(device_id: str = Query(default='ecosensor02'), action: str
         'diagnostics': result.get('diagnostics'),
         'error': result.get('reason') or result.get('response'),
     })
+
+
+@app.post('/api/debug/temp-hum-sample')
+async def debug_temp_hum_sample(request: Request) -> JSONResponse:
+    """Endpoint temporal de debug: recibe una muestra cruda del ESP32 y solo la imprime.
+
+    No guarda en SQLite ni participa en las gráficas. Retirar cuando termine el diagnóstico
+    de temperatura/humedad SCD40 vs SEN55.
+    """
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        return JSONResponse({'ok': False, 'error': f'invalid_json: {exc}'}, status_code=400)
+
+    if not isinstance(payload, dict):
+        return JSONResponse({'ok': False, 'error': 'json_object_required'}, status_code=400)
+
+    device_id = str(payload.get('device_id') or 'unknown').strip().lower() or 'unknown'
+    print(
+        '[ecosensor-temp-hum-sample] '
+        f'{device_id} '
+        f'sample={payload.get("sample_slot")} '
+        f'uptime_s={payload.get("uptime_s")} '
+        f'scd_ret={payload.get("scd_ret")} sen_ret={payload.get("sen_ret")} '
+        f'scd40_temp={payload.get("scd_temp")} scd40_hum={payload.get("scd_hum")} '
+        f'sen55_temp={payload.get("sen_temp")} sen55_hum={payload.get("sen_hum")} '
+        f'avg_temp={payload.get("avg_temp")} avg_hum={payload.get("avg_hum")}',
+        flush=True,
+    )
+    return JSONResponse({'ok': True, 'debug': 'temp_hum_sample_printed'})
 
 
 @app.get('/api/ota/devices')
