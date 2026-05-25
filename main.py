@@ -43,6 +43,8 @@ _register_pages()
 app.add_static_files('/static', STATIC_DIR)
 
 _background_sync_task: asyncio.Task | None = None
+_TEMP_HUM_LOG_DEVICE_ORDER = ('ecosensor01', 'ecosensor02', 'ecosensor03')
+_temp_hum_latest_samples: dict[str, dict] = {}
 
 
 def _start_background_sync() -> None:
@@ -120,23 +122,22 @@ async def debug_temp_hum_sample(request: Request) -> JSONResponse:
         return JSONResponse({'ok': False, 'error': 'json_object_required'}, status_code=400)
 
     device_id = str(payload.get('device_id') or 'unknown').strip().lower() or 'unknown'
-    if device_id not in {'ecosensor01', 'ecosensor02', 'ecosensor03'}:
+    if device_id not in _TEMP_HUM_LOG_DEVICE_ORDER:
         return JSONResponse({'ok': True, 'debug': 'temp_hum_sample_ignored', 'device_id': device_id})
 
-    print(
-        '[ecosensor-temp-hum-sample] '
-        f'{device_id} '
-        f'sample={payload.get("sample_slot")} '
-        f'scd40_temp={payload.get("scd_temp")} scd40_hum={payload.get("scd_hum")} '
-        f'sen55_temp={payload.get("sen_temp")} sen55_hum={payload.get("sen_hum")} '
-        f'scd40_offset_valid={payload.get("scd_temp_offset_valid")} '
-        f'scd40_offset={payload.get("scd_temp_offset")} '
-        f'scd40_offset_raw={payload.get("scd_temp_offset_raw")} '
-        f'sen55_offset_valid={payload.get("sen55_offset_valid")} '
-        f'sen55_offset={payload.get("sen55_offset")} '
-        f'sen55_offset_raw={payload.get("sen55_offset_raw")}',
-        flush=True,
-    )
+    _temp_hum_latest_samples[device_id] = payload
+    if all(item in _temp_hum_latest_samples for item in _TEMP_HUM_LOG_DEVICE_ORDER):
+        lines = ['[ecosensor-temp-hum-sample]']
+        for item in _TEMP_HUM_LOG_DEVICE_ORDER:
+            sample = _temp_hum_latest_samples[item]
+            lines.append(
+                f'{item} '
+                f'sample={sample.get("sample_slot")} '
+                f'scd40_temp={sample.get("scd_temp")} scd40_hum={sample.get("scd_hum")} '
+                f'sen55_temp={sample.get("sen_temp")} sen55_hum={sample.get("sen_hum")}'
+            )
+        print('\n'.join(lines), flush=True)
+
     capture = add_offset_capture_sample(payload)
     return JSONResponse({'ok': True, 'debug': 'temp_hum_sample_printed', 'capture': capture})
 
