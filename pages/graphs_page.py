@@ -16,7 +16,10 @@ MAX_BARS = 24
 INITIAL_FETCH_LIMIT = 5000
 SAMPLE_BASE_MIN = 5
 REALTIME_RETRY_SECONDS = 30.0
-REALTIME_REFRESH_GRACE_SECONDS = 12.0
+REALTIME_PRECHECK_SECONDS = 10.0
+REALTIME_POLL_SECONDS = 15.0
+REALTIME_POLL_WINDOW_SECONDS = 120.0
+REALTIME_IDLE_RETRY_SECONDS = 60.0
 REALTIME_MAX_WAIT_SECONDS = 360.0
 MENU = [
     ('5 min', 5),
@@ -455,11 +458,12 @@ def _series_data(frame: Any, spec: ChartSpec, minutes: int) -> tuple[list[str], 
 
 
 def _seconds_until_next_realtime_refresh(frame: Any | None) -> float:
-    """Calcula cuándo conviene revisar una nueva medición de tiempo real.
+    """Calcula cuándo revisar si llegó una nueva medición de tiempo real.
 
-    El firmware genera una medición/promedio cada SAMPLE_BASE_MIN minutos. En vez
-    de consultar cada 60 s, esperamos hasta la siguiente ventana estimada y damos
-    un pequeño margen para que el ESP32 guarde y el servidor pueda sincronizar.
+    Estrategia:
+    - esperar hasta última medición + SAMPLE_BASE_MIN minutos - 10 s;
+    - desde ahí abrir una ventana de 2 min consultando cada 15 s;
+    - si no aparece medición nueva en esa ventana, bajar a un retry liviano.
     """
     if frame is None or getattr(frame, 'empty', True) or '_dt' not in frame:
         return REALTIME_RETRY_SECONDS
@@ -470,14 +474,18 @@ def _seconds_until_next_realtime_refresh(frame: Any | None) -> float:
             last_dt = last_dt.to_pydatetime()
         if getattr(last_dt, 'tzinfo', None) is not None:
             last_dt = last_dt.replace(tzinfo=None)
-        next_dt = last_dt + timedelta(minutes=SAMPLE_BASE_MIN)
-        delay = (next_dt - datetime.now()).total_seconds() + REALTIME_REFRESH_GRACE_SECONDS
+        probe_start = last_dt + timedelta(minutes=SAMPLE_BASE_MIN, seconds=-REALTIME_PRECHECK_SECONDS)
+        probe_end = probe_start + timedelta(seconds=REALTIME_POLL_WINDOW_SECONDS)
+        now = datetime.now()
     except Exception:
         return REALTIME_RETRY_SECONDS
 
-    if delay <= 0:
-        return REALTIME_RETRY_SECONDS
-    return min(max(delay, REALTIME_RETRY_SECONDS), REALTIME_MAX_WAIT_SECONDS)
+    if now < probe_start:
+        delay = (probe_start - now).total_seconds()
+        return min(max(delay, REALTIME_RETRY_SECONDS), REALTIME_MAX_WAIT_SECONDS)
+    if now <= probe_end:
+        return REALTIME_POLL_SECONDS
+    return REALTIME_IDLE_RETRY_SECONDS
 
 
 def _build_figure(frame: Any, spec: ChartSpec, minutes: int) -> Any:
