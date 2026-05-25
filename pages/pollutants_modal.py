@@ -26,14 +26,14 @@ POLLUTANTS = {
         'html': '''
             <h4>Puntos clave:</h4>
             <ul>
-                <li>Las partículas pequeñas en el aire, especialmente las inferiores a <b>< 2.5 μm (0,0025 mm)</b>, son 
-                peligrosas y pueden causar graves consecuencias para la salud a largo plazo.</li>
-                <li>Existen índices y colores contradictorios en diferentes países. Asegúrese de conocer el valor de PM2.5 en μg/m³.</li>
-                <li>No existen niveles seguros de PM. Deben ser lo más bajos posible. La OMS recomienda un promedio anual inferior a 5 μg/m³.</li>
-                <li>Utilice purificadores de aire con filtro <b>HEPA</b> en interiores o mascarillas <b>N95</b> en exteriores para reducir su exposición.</li>
+            <li>Las partículas pequeñas en el aire, especialmente las inferiores a  <b>&lt; 2.5 μm (0,0025 mm),</b> 
+               son peligrosas y pueden causar graves consecuencias para la salud a largo plazo.</li>
+            <li>Existen índices y colores contradictorios en diferentes países. Asegúrese de conocer el valor de PM2.5 en μg/m³.</li>
+            <li>No existen niveles seguros de PM. Deben ser lo más bajos posible. La OMS recomienda un promedio anual inferior a 5 μg/m³.</li>
+            <li>Utilice purificadores de aire con filtro <b> HEPA</b>  en interiores o mascarillas <b>N95</b>  en exteriores para reducir su exposición.</li>
             </ul>
-            <h5><b>Organización Mundial de la Salud: Mantenga el nivel anual de PM2.5 por debajo de 5 μg/m³. Cuanto más cercano a cero, mejor.</b></h5>
-            <h5><b>Índice de Calidad del Aire (ICA). Esperanza de vida que se pierde debido a la contaminación del aire por PM. https://aqli.epic.uchicago.edu/the-index/ </b></h5>
+            <h5>Organización Mundial de la Salud: Mantenga el nivel anual de PM2.5 por debajo de <b>5 μg/m³</b>. Cuanto más cercano a cero, mejor.</h5>
+            <h5>Índice de Calidad del Aire (ICA). Esperanza de vida que se pierde debido a la contaminación del aire por PM. https://aqli.epic.uchicago.edu/the-index/</h5>
         ''',
     },
     'co2': {
@@ -45,13 +45,13 @@ POLLUTANTS = {
         'html': '''
             <h4>Puntos clave:</h4>
             <ul>
-                <li>El dióxido de carbono (CO₂) es un gas presente en la atmósfera y su concentración exterior ronda las 430 ppm.</li>
-                <li>Al respirar, exhalamos CO₂, por lo que su concentración puede aumentar rápidamente en lugares cerrados.</li>
-                <li>Los altos niveles de CO₂ pueden causar dolores de cabeza y afectar el rendimiento cerebral.</li>
-                <li>Para reducir la concentración de CO₂, puede abrir las ventanas o aumentar el flujo de aire fresco de su sistema de climatización.</li>
-                <li>Los sistemas de aire acondicionado convencionales de pared no reducen la concentración de CO₂, ya que solo recirculan el aire interior.</li>
-                <li>La mayoría de los sensores de CO₂ realizan una calibración automática de referencia ABC. Para funcionar correctamente, la habitación debe ventilarse con frecuencia.</li>
-                <li>Asegúrese de que su sensor de CO₂ utilice tecnología NDIR.</li>
+            <li>El dióxido de carbono (CO₂) es un gas presente en la atmósfera y su concentración exterior ronda las 430 ppm.</li>
+            <li>Al respirar, exhalamos CO₂, por lo que su concentración puede aumentar rápidamente en lugares cerrados.</li>
+            <li>Los altos niveles de CO₂ pueden causar dolores de cabeza y afectar el rendimiento cerebral.</li>
+            <li>Para reducir la concentración de CO₂, puede abrir las ventanas o aumentar el flujo de aire fresco de su sistema de climatización.</li>
+            <li>Tenga en cuenta que los sistemas de aire acondicionado convencionales de pared no reducen la concentración de CO₂, ya que solo recirculan el aire interior.</li>
+            <li>La mayoría de los sensores de CO2 realizan una calibración automática de referencia (ABC). Para que funcionen correctamente, la habitación debe ventilarse con frecuencia, por ejemplo, una vez por semana. De lo contrario, estos sensores podrían mostrar lecturas demasiado bajas.</li>
+            <li>Asegúrese de que su sensor de CO2 utilice tecnología NDIR, ya que este tipo de sensores mide el CO2 de forma directa y precisa.</li>
             </ul>
         ''',
     },
@@ -64,10 +64,13 @@ POLLUTANTS = {
         'html': '''
             <h4>Puntos clave:</h4>
             <ul>
-                <li>Hay más de 10000 VOC en el aire. Algunos son extremadamente dañinos, otros inocuos.</li>
-                <li>Los sensores antiguos de VOC se probaban con un solo tipo de alcohol, lo cual no refleja la calidad del aire real.</li>
-                <li>Los sensores más modernos se centran en la variación de VOC en las últimas horas, no necesariamente en concentraciones absolutas.</li>
-                <li>Si observa picos durante el día y puede identificar la fuente, puede intentar reducir la exposición.</li>
+            <li>Hay más de 10000 VOC en el aire. Algunos son extremadamente dañinos, otros inocuos. Ambos influyen en los valores de VOC. 
+            Por lo tanto, es fundamental conocer el VOC específico para tomar una decisión informada.</li>
+            <li>Los sensores de VOC antiguos de algunos monitores de calidad del aire se probaban en laboratorios especializados con un solo 
+              tipo de alcohol (etanol). Esto no refleja la calidad del aire en el mundo real, donde existen muchos VOC diferentes. Por lo tanto, 
+              los valores que muestran estos sensores podrían no indicar con exactitud la cantidad de VOC dañinos presentes en el aire.</li>
+            <li>Los sensores más modernos se centran ahora en la variación de los VOC en, por ejemplo, las últimas 24 horas, en lugar de las concentraciones absolutas.</li>
+            <li>Si observa picos a lo largo del día y puede identificar la fuente, puede intentar reducir la exposición a estas sustancias químicas.</li>
             </ul>
         ''',
     },
@@ -80,10 +83,13 @@ POLLUTANTS = {
         'html': '''
             <h4>Puntos clave:</h4>
             <ul>
-                <li>El NOx es la suma del óxido nítrico NO y el dióxido de nitrógeno NO₂.</li>
-                <li>La exposición al NOx se asocia con enfermedades cardiovasculares, asma, diabetes mellitus, hipertensión, accidente cerebrovascular y EPOC.</li>
-                <li>El NOx se genera por combustión en motores, automóviles, camiones, barcos, aeronaves e industrias.</li>
-                <li>El NOx también contribuye a la formación de esmog, lluvia ácida y ozono troposférico.</li>
+            <li>El NOx es la suma del óxido nítrico (NO) y el dióxido de nitrógeno (NO₂). Estos dos contaminantes tienen propiedades similares y 
+              participan en muchos de los mismos procesos químicos en la atmósfera.</li>
+            <li>La exposición al NOx se asocia con enfermedades cardiovasculares, asma, diabetes mellitus, hipertensión, accidente cerebrovascular 
+              y enfermedad pulmonar obstructiva crónica (EPOC).</li>
+            <li>El NOx se genera por la combustión en motores (automóviles, camiones, barcos, aeronaves e industrias). Por lo tanto, representa un 
+              problema particular en las zonas urbanas. Sin embargo, las actividades agrícolas y algunos fenómenos naturales también pueden generarlo.</li>
+            <li>El NOx también contribuye a la formación de esmog, lluvia ácida y ozono troposférico.</li>
             </ul>
         ''',
     },
