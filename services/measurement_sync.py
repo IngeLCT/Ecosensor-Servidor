@@ -12,10 +12,9 @@ from services.device_registry import (
     refresh_active_devices,
 )
 from services.esp_client import build_endpoints, fetch_json, fetch_readings_since, fetch_recent_readings, sync_time_if_needed
-from services.sensor_diagnostics import log_co2_diagnostics_if_needed, log_temp_humidity_sources_if_needed
-from services.sync_debug import record_sync_event, summarize_response, sync_debug_snapshot
+from services.sync_debug import record_sync_event, summarize_response
 from shared.formatters import row_from_payload
-from storage.measurements_store import get_latest_measurement, latest_source_id, measurement_debug_summary, save_measurement
+from storage.measurements_store import get_latest_measurement, latest_source_id, save_measurement
 
 _sync_locks: dict[str, asyncio.Lock] = {}
 SYNC_CHUNK_SIZE = 25
@@ -192,7 +191,6 @@ async def sync_sensor_measurements(device_id: str | None = None) -> dict[str, An
                     except (TypeError, ValueError):
                         latest_remote_id = 0
                     latest_inserted = await asyncio.to_thread(save_measurement, host_now, row)
-                    log_temp_humidity_sources_if_needed(selected_device_id, data)
             latest_valid = bool(isinstance(data, dict) and data.get('valid'))
             record_sync_event(
                 selected_device_id,
@@ -205,18 +203,6 @@ async def sync_sensor_measurements(device_id: str | None = None) -> dict[str, An
                 latest_remote_id=latest_remote_id,
                 response=summarize_response(lecturas),
             )
-
-            latest_co2 = None
-            if isinstance(data, dict):
-                try:
-                    latest_co2 = int(data.get('co2') or 0)
-                except (TypeError, ValueError):
-                    latest_co2 = None
-            if selected_device_id == 'ecosensor02' or latest_co2 == 0 or not latest_valid:
-                try:
-                    await log_co2_diagnostics_if_needed(selected_device_id, host_now, data if isinstance(data, dict) else None)
-                except Exception as exc:
-                    record_sync_event(selected_device_id, 'co2_diagnostics_error', error=str(exc)[:180])
 
             # Prioridad 2: si el firmware nuevo está disponible, rellenar hacia
             # atrás desde lo más reciente. Así las gráficas obtienen primero los
@@ -433,43 +419,3 @@ async def background_sync_loop(interval_seconds: float = 300.0) -> None:
             # El loop debe sobrevivir caídas puntuales de red/ESP32.
             pass
         await asyncio.sleep(interval_seconds)
-
-
-async def debug_device_snapshot(device_id: str | None = None) -> dict[str, Any]:
-    """Diagnóstico bajo demanda para consola/API; no modifica la UI."""
-    target_id = (device_id or DEVICE_ID).strip().lower() or DEVICE_ID
-    active = await ensure_device_active(target_id)
-    host = str((active or {}).get('host') or host_for_device(target_id))
-    endpoints = build_endpoints(host)
-    latest_source = await asyncio.to_thread(latest_source_id, target_id)
-
-    status = await fetch_json(endpoints['status'], timeout=3.0) if endpoints['status'] else {'ok': False, 'data': 'missing status endpoint'}
-    lecturas = await fetch_json(endpoints['lecturas'], timeout=4.0) if endpoints['lecturas'] else {'ok': False, 'data': 'missing lecturas endpoint'}
-    diagnostics = await fetch_json(endpoints['diagnostics'], timeout=4.0) if endpoints.get('diagnostics') else {'ok': False, 'data': 'missing diagnostics endpoint'}
-    since = await fetch_readings_since(host, latest_source, limit=20, timeout=5.0) if host else {'ok': False, 'data': 'missing host'}
-
-    since_data = since.get('data') if since.get('ok') else None
-    rows = since_data.get('rows') if isinstance(since_data, dict) else None
-
-    return {
-        'ok': True,
-        'device_id': target_id,
-        'host': host,
-        'active_entry': active,
-        'local_storage': await asyncio.to_thread(measurement_debug_summary, target_id),
-        'latest_local_source_id': latest_source,
-        'remote': {
-            'status': summarize_response(status),
-            'lecturas': summarize_response(lecturas),
-            'diagnostics': diagnostics.get('data') if diagnostics.get('ok') and isinstance(diagnostics.get('data'), dict) else summarize_response(diagnostics),
-            'lecturas_since': {
-                **summarize_response(since),
-                'rows_preview': rows[:3] if isinstance(rows, list) else None,
-            },
-        },
-        'sync_events': sync_debug_snapshot(target_id),
-    }
-
-
-def host_for_selected_device(device_id: str | None) -> str:
-    return host_for_device(device_id or DEVICE_ID)

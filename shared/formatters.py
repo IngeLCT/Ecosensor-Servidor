@@ -8,6 +8,25 @@ def device_display_name(device_id: str = DEVICE_ID) -> str:
     return f'EcoSensor{suffix or "01"}'
 
 
+def _float_or_none(value: Any) -> float | None:
+    if value is None or value == '':
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _round2_or_none(value: Any) -> float | None:
+    number = _float_or_none(value)
+    return None if number is None else round(number, 2)
+
+
+def _int_or_none(value: Any) -> int | None:
+    number = _float_or_none(value)
+    return None if number is None else int(round(number))
+
+
 def row_from_payload(payload: dict[str, Any] | None) -> dict[str, Any] | None:
     if not payload:
         return None
@@ -19,19 +38,19 @@ def row_from_payload(payload: dict[str, Any] | None) -> dict[str, Any] | None:
         'time_valid': payload.get('time_valid'),
         'time_source': payload.get('time_source'),
         'timestamp': payload.get('timestamp'),
-        'pm1p0': payload.get('pm1p0'),
-        'pm2p5': payload.get('pm2p5'),
-        'pm4p0': payload.get('pm4p0'),
-        'pm10p0': payload.get('pm10p0'),
-        'voc': payload.get('voc'),
-        'nox': payload.get('nox'),
-        'co2': payload.get('co2'),
-        'temp': payload.get('temp'),
-        'hum': payload.get('hum'),
-        'scd_temp': payload.get('scd_temp'),
-        'scd_hum': payload.get('scd_hum'),
-        'sen_temp': payload.get('sen_temp'),
-        'sen_hum': payload.get('sen_hum'),
+        'pm1p0': _round2_or_none(payload.get('pm1p0')),
+        'pm2p5': _round2_or_none(payload.get('pm2p5')),
+        'pm4p0': _round2_or_none(payload.get('pm4p0')),
+        'pm10p0': _round2_or_none(payload.get('pm10p0')),
+        'voc': _round2_or_none(payload.get('voc')),
+        'nox': _round2_or_none(payload.get('nox')),
+        'co2': _int_or_none(payload.get('co2')),
+        'temp': _round2_or_none(payload.get('temp')),
+        'hum': _int_or_none(payload.get('hum')),
+        'scd_temp': _round2_or_none(payload.get('scd_temp')),
+        'scd_hum': _round2_or_none(payload.get('scd_hum')),
+        'sen_temp': _round2_or_none(payload.get('sen_temp')),
+        'sen_hum': _round2_or_none(payload.get('sen_hum')),
         'window_s': payload.get('window_s'),
     }
 
@@ -39,6 +58,12 @@ def row_from_payload(payload: dict[str, Any] | None) -> dict[str, Any] | None:
 def format_value(value: Any, decimals: int = 2) -> str:
     if value is None:
         return '0'
-    if isinstance(value, float):
-        return f'{value:.{decimals}f}'
-    return str(value)
+    if decimals == 0:
+        try:
+            return str(int(round(float(value))))
+        except (TypeError, ValueError):
+            return str(value)
+    try:
+        return f'{float(value):.{decimals}f}'
+    except (TypeError, ValueError):
+        return str(value)

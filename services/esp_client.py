@@ -40,8 +40,6 @@ def build_endpoints(host: str) -> dict[str, str]:
         'config': f'{base_url}/config' if base_url else '',
         'time': f'{base_url}/time' if base_url else '',
         'diagnostics': f'{base_url}/diagnostics' if base_url else '',
-        'debug': f'{base_url}/debug' if base_url else '',
-        'debug_scd40': f'{base_url}/debug/scd40' if base_url else '',
         'ota_update': f'{base_url}/ota/update' if base_url else '',
         'ota_status': f'{base_url}/ota/status' if base_url else '',
         'wifi_clear': f'{base_url}/wifi/clear' if base_url else '',

@@ -122,6 +122,26 @@ def _int_or_none(value: Any) -> int | None:
         return None
 
 
+def _round2_or_none(value: Any) -> float | None:
+    number = _float_or_none(value)
+    return None if number is None else round(number, 2)
+
+
+def _rounded_int_or_none(value: Any) -> int | None:
+    number = _float_or_none(value)
+    return None if number is None else int(round(number))
+
+
+def _csv_decimal(value: Any) -> str:
+    number = _round2_or_none(value)
+    return '' if number is None else f'{number:.2f}'
+
+
+def _csv_int(value: Any) -> str | int:
+    number = _rounded_int_or_none(value)
+    return '' if number is None else number
+
+
 def _bool_or_none(value: Any) -> bool | None:
     if value is None or value == '':
         return None
@@ -149,19 +169,19 @@ def _measurement_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         'uptime_s': row['uptime_s'],
         'time_valid': bool(row['time_valid']) if row['time_valid'] is not None else None,
         'time_source': row['time_source'],
-        'pm1p0': row['pm1p0'],
-        'pm2p5': row['pm2p5'],
-        'pm4p0': row['pm4p0'],
-        'pm10p0': row['pm10p0'],
-        'voc': row['voc'],
-        'nox': row['nox'],
-        'co2': row['co2'],
-        'temp': row['temp'],
-        'hum': row['hum'],
-        'scd_temp': row['scd_temp'] if 'scd_temp' in row.keys() else None,
-        'scd_hum': row['scd_hum'] if 'scd_hum' in row.keys() else None,
-        'sen_temp': row['sen_temp'] if 'sen_temp' in row.keys() else None,
-        'sen_hum': row['sen_hum'] if 'sen_hum' in row.keys() else None,
+        'pm1p0': _round2_or_none(row['pm1p0']),
+        'pm2p5': _round2_or_none(row['pm2p5']),
+        'pm4p0': _round2_or_none(row['pm4p0']),
+        'pm10p0': _round2_or_none(row['pm10p0']),
+        'voc': _round2_or_none(row['voc']),
+        'nox': _round2_or_none(row['nox']),
+        'co2': _rounded_int_or_none(row['co2']),
+        'temp': _round2_or_none(row['temp']),
+        'hum': _rounded_int_or_none(row['hum']),
+        'scd_temp': _round2_or_none(row['scd_temp']) if 'scd_temp' in row.keys() else None,
+        'scd_hum': _round2_or_none(row['scd_hum']) if 'scd_hum' in row.keys() else None,
+        'sen_temp': _round2_or_none(row['sen_temp']) if 'sen_temp' in row.keys() else None,
+        'sen_hum': _round2_or_none(row['sen_hum']) if 'sen_hum' in row.keys() else None,
         'window_s': row['window_s'],
     }
 
@@ -257,19 +277,19 @@ def _graph_row(row: sqlite3.Row) -> dict[str, Any]:
         'device_id': row['device_id'],
         'fecha': fecha,
         'hora': hora,
-        'pm1p0': row['pm1p0'],
-        'pm2p5': row['pm2p5'],
-        'pm4p0': row['pm4p0'],
-        'pm10p0': row['pm10p0'],
-        'voc': row['voc'],
-        'nox': row['nox'],
-        'co2': row['co2'],
-        'temp': row['temp'],
-        'hum': row['hum'],
-        'scd_temp': row['scd_temp'] if 'scd_temp' in row.keys() else None,
-        'scd_hum': row['scd_hum'] if 'scd_hum' in row.keys() else None,
-        'sen_temp': row['sen_temp'] if 'sen_temp' in row.keys() else None,
-        'sen_hum': row['sen_hum'] if 'sen_hum' in row.keys() else None,
+        'pm1p0': _round2_or_none(row['pm1p0']),
+        'pm2p5': _round2_or_none(row['pm2p5']),
+        'pm4p0': _round2_or_none(row['pm4p0']),
+        'pm10p0': _round2_or_none(row['pm10p0']),
+        'voc': _round2_or_none(row['voc']),
+        'nox': _round2_or_none(row['nox']),
+        'co2': _rounded_int_or_none(row['co2']),
+        'temp': _round2_or_none(row['temp']),
+        'hum': _rounded_int_or_none(row['hum']),
+        'scd_temp': _round2_or_none(row['scd_temp']) if 'scd_temp' in row.keys() else None,
+        'scd_hum': _round2_or_none(row['scd_hum']) if 'scd_hum' in row.keys() else None,
+        'sen_temp': _round2_or_none(row['sen_temp']) if 'sen_temp' in row.keys() else None,
+        'sen_hum': _round2_or_none(row['sen_hum']) if 'sen_hum' in row.keys() else None,
     }
 
 
@@ -409,7 +429,6 @@ def measurements_csv_text(device_id: str | None = None) -> str:
         'id', 'device_id', 'Fecha de medicion', 'Hora de medicion',
         'PM1.0', 'PM2.5', 'PM4.0', 'PM10.0',
         'VOC', 'NOx', 'CO2', 'Temperatura', 'Humedad',
-        'Temperatura SCD40', 'Humedad SCD40', 'Temperatura SEN55', 'Humedad SEN55',
     ]
     writer = csv.DictWriter(output, fieldnames=fieldnames)
     writer.writeheader()
@@ -420,7 +439,7 @@ def measurements_csv_text(device_id: str | None = None) -> str:
             '''
             SELECT id, source_id, device_id, device_timestamp,
                    pm1p0, pm2p5, pm4p0, pm10p0,
-                   voc, nox, co2, temp, hum, scd_temp, scd_hum, sen_temp, sen_hum
+                   voc, nox, co2, temp, hum
             FROM measurements
             ORDER BY COALESCE(source_id, id) ASC, id ASC
             '''
@@ -432,19 +451,15 @@ def measurements_csv_text(device_id: str | None = None) -> str:
                 'device_id': row['device_id'],
                 'Fecha de medicion': date_part,
                 'Hora de medicion': time_part,
-                'PM1.0': row['pm1p0'],
-                'PM2.5': row['pm2p5'],
-                'PM4.0': row['pm4p0'],
-                'PM10.0': row['pm10p0'],
-                'VOC': row['voc'],
-                'NOx': row['nox'],
-                'CO2': row['co2'],
-                'Temperatura': row['temp'],
-                'Humedad': row['hum'],
-                'Temperatura SCD40': row['scd_temp'],
-                'Humedad SCD40': row['scd_hum'],
-                'Temperatura SEN55': row['sen_temp'],
-                'Humedad SEN55': row['sen_hum'],
+                'PM1.0': _csv_decimal(row['pm1p0']),
+                'PM2.5': _csv_decimal(row['pm2p5']),
+                'PM4.0': _csv_decimal(row['pm4p0']),
+                'PM10.0': _csv_decimal(row['pm10p0']),
+                'VOC': _csv_decimal(row['voc']),
+                'NOx': _csv_decimal(row['nox']),
+                'CO2': _csv_int(row['co2']),
+                'Temperatura': _csv_decimal(row['temp']),
+                'Humedad': _csv_int(row['hum']),
             })
 
     return output.getvalue()
@@ -471,19 +486,19 @@ def save_measurement(host: str, row: dict[str, Any]) -> bool:
         'uptime_s': _int_or_none(row.get('uptime_s')),
         'time_valid': time_valid,
         'time_source': time_source,
-        'pm1p0': _float_or_none(row.get('pm1p0')),
-        'pm2p5': _float_or_none(row.get('pm2p5')),
-        'pm4p0': _float_or_none(row.get('pm4p0')),
-        'pm10p0': _float_or_none(row.get('pm10p0')),
-        'voc': _float_or_none(row.get('voc')),
-        'nox': _float_or_none(row.get('nox')),
-        'co2': _float_or_none(row.get('co2')),
-        'temp': _float_or_none(row.get('temp')),
-        'hum': _float_or_none(row.get('hum')),
-        'scd_temp': _float_or_none(row.get('scd_temp')),
-        'scd_hum': _float_or_none(row.get('scd_hum')),
-        'sen_temp': _float_or_none(row.get('sen_temp')),
-        'sen_hum': _float_or_none(row.get('sen_hum')),
+        'pm1p0': _round2_or_none(row.get('pm1p0')),
+        'pm2p5': _round2_or_none(row.get('pm2p5')),
+        'pm4p0': _round2_or_none(row.get('pm4p0')),
+        'pm10p0': _round2_or_none(row.get('pm10p0')),
+        'voc': _round2_or_none(row.get('voc')),
+        'nox': _round2_or_none(row.get('nox')),
+        'co2': _rounded_int_or_none(row.get('co2')),
+        'temp': _round2_or_none(row.get('temp')),
+        'hum': _rounded_int_or_none(row.get('hum')),
+        'scd_temp': _round2_or_none(row.get('scd_temp')),
+        'scd_hum': _round2_or_none(row.get('scd_hum')),
+        'sen_temp': _round2_or_none(row.get('sen_temp')),
+        'sen_hum': _round2_or_none(row.get('sen_hum')),
         'window_s': _int_or_none(row.get('window_s')),
     }
 

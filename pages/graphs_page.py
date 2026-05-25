@@ -71,7 +71,7 @@ VOC_NOX_CHARTS = [
 ]
 
 AMBIENT_CHARTS = [
-    ChartSpec('co2', 'CO2', 'ppm', '#990000', coverage=0.85),
+    ChartSpec('co2', 'CO2', 'ppm', '#990000', coverage=0.85, round_values=True),
     ChartSpec('temp', 'Temperatura', '°C', '#006600', coverage=0.85),
     ChartSpec('hum', 'Humedad relativa', '%', '#0000cc', coverage=0.85, round_values=True),
 ]
@@ -703,7 +703,7 @@ HISTORY_OPTIONS: dict[str, ChartSpec] = {
     'pm10p0': ChartSpec('pm10p0', 'PM10.0', 'µg/m³', '#bf00ff'),
     'voc': ChartSpec('voc', 'VOC', 'Index', '#ff8000'),
     'nox': ChartSpec('nox', 'NOx', 'Index', '#00ff00'),
-    'co2': ChartSpec('co2', 'CO2', 'ppm', '#990000'),
+    'co2': ChartSpec('co2', 'CO2', 'ppm', '#990000', round_values=True),
     'temp': ChartSpec('temp', 'Temperatura', '°C', '#006600'),
     'hum': ChartSpec('hum', 'Humedad', '%', '#0000cc', round_values=True),
 }
