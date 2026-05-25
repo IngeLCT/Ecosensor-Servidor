@@ -93,6 +93,22 @@ async def api_measurements_push(request: Request) -> JSONResponse:
     if client_host:
         remember_host(client_host, device_id)
 
+    print(
+        '[push_measurement] '
+        f"{device_id} | "
+        f"measurement_id={row.get('measurement_id')} | "
+        f"timestamp={row.get('timestamp')} | "
+        f"PM1.0={row.get('pm1p0')} | "
+        f"PM2.5={row.get('pm2p5')} | "
+        f"PM4.0={row.get('pm4p0')} | "
+        f"PM10.0={row.get('pm10p0')} | "
+        f"VOC={row.get('voc')} | "
+        f"NOx={row.get('nox')} | "
+        f"CO2={row.get('co2')} | "
+        f"Temperatura={row.get('temp')} | "
+        f"Humedad={row.get('hum')}"
+    )
+
     inserted = await asyncio.to_thread(save_measurement, host, row)
     record_sync_event(
         device_id,
