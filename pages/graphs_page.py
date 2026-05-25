@@ -48,6 +48,8 @@ class ChartSpec:
     color: str
     coverage: float = 0.90
     round_values: bool = False
+    realtime_y_max: float | None = None
+    realtime_y_cap: float | None = None
 
     @property
     def y_title(self) -> str:
@@ -62,7 +64,7 @@ PARTICLE_CHARTS = [
 ]
 
 VOC_NOX_CHARTS = [
-    ChartSpec('voc', 'VOC', 'Index', '#ff8000'),
+    ChartSpec('voc', 'VOC', 'Index', '#ff8000', realtime_y_cap=500),
     ChartSpec('nox', 'NOx', 'Index', '#00ff00'),
 ]
 
@@ -484,7 +486,9 @@ def _build_figure(frame: Any, spec: ChartSpec, minutes: int) -> Any:
 
     labels, values = _series_data(frame, spec, minutes)
     finite = [v for v in values if isinstance(v, (int, float)) and math.isfinite(v) and v >= 0]
-    upper = max(finite) * 2 if finite and max(finite) > 0 else 1
+    upper = spec.realtime_y_max if spec.realtime_y_max is not None else (max(finite) * 2 if finite and max(finite) > 0 else 1)
+    if spec.realtime_y_cap is not None:
+        upper = min(upper, spec.realtime_y_cap)
     x_values = list(range(MAX_BARS))
 
     fig = go.Figure(
@@ -616,12 +620,18 @@ def _graph_page(page_title: str, charts: list[ChartSpec]) -> None:
                 app.storage.user.pop('selected_device_id', None)
         id_label.set_text(f'ID: {device_display_name(selected_device_id) if selected_device_id else "-"}')
 
+    page_client = ui.context.client
+
+    def client_alive() -> bool:
+        return not getattr(page_client, '_deleted', False)
+
     def schedule_next_refresh(delay_seconds: float) -> None:
-        ui.timer(delay_seconds, refresh, once=True)
+        if client_alive():
+            ui.timer(delay_seconds, refresh, once=True)
 
     async def refresh() -> None:
         nonlocal frame_cache, refresh_running
-        if refresh_running:
+        if not client_alive() or refresh_running:
             return
         refresh_running = True
         next_delay = REALTIME_RETRY_SECONDS
@@ -641,9 +651,11 @@ def _graph_page(page_title: str, charts: list[ChartSpec]) -> None:
             next_delay = _seconds_until_next_realtime_refresh(frame_cache)
         finally:
             refresh_running = False
-            schedule_next_refresh(next_delay)
+            if client_alive():
+                schedule_next_refresh(next_delay)
 
-    ui.timer(0.1, refresh, once=True)
+    if client_alive():
+        ui.timer(0.1, refresh, once=True)
 
 
 @ui.page('/graficas/particulas')
