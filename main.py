@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from nicegui import app, ui
 
 from config import STATIC_DIR, UI_HOST, UI_PORT
-from services.device_registry import active_devices, probe_failures
+from services.device_registry import active_devices, probe_failures, remember_host
 from services.measurement_sync import background_sync_loop, debug_device_snapshot
 from services.offset_capture import add_sample as add_offset_capture_sample
 from services.offset_capture import file_path_for as offset_capture_file_path
@@ -28,9 +28,10 @@ from services.offset_capture import snapshot as offset_capture_snapshot
 from services.offset_capture import start_capture as start_offset_capture
 from services.ota_manager import OtaError, firmware_file_path, load_manifest, ota_snapshot, start_device_ota
 from services.sensor_diagnostics import log_co2_diagnostics_if_needed, run_scd40_debug_action
-from services.sync_debug import sync_debug_snapshot
+from services.sync_debug import record_sync_event, sync_debug_snapshot
 from services.mdns_service import start_mdns_service
-from storage.measurements_store import graph_latest_row, graph_rows_history, graph_rows_since, measurements_csv_text
+from shared.formatters import row_from_payload
+from storage.measurements_store import graph_latest_row, graph_rows_history, graph_rows_since, measurements_csv_text, save_measurement
 
 
 def _register_pages() -> None:
@@ -149,6 +150,61 @@ async def debug_temp_hum_sample(request: Request) -> JSONResponse:
 
     capture = add_offset_capture_sample(payload)
     return JSONResponse({'ok': True, 'debug': 'temp_hum_sample_printed', 'capture': capture})
+
+
+@app.post('/api/measurements/push')
+async def api_measurements_push(request: Request) -> JSONResponse:
+    """Recibe una medición promedio enviada directamente por un EcoSensor.
+
+    Este endpoint es el camino principal de tiempo real: el ESP32 publica cada
+    promedio de 5 min y el servidor lo guarda en SQLite. La sincronización por
+    polling queda como respaldo para recuperar huecos.
+    """
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        return JSONResponse({'ok': False, 'error': f'invalid_json: {exc}'}, status_code=400)
+
+    if not isinstance(payload, dict):
+        return JSONResponse({'ok': False, 'error': 'json_object_required'}, status_code=400)
+
+    row = row_from_payload(payload)
+    if not row:
+        return JSONResponse({'ok': False, 'error': 'empty_payload'}, status_code=400)
+
+    device_id = str(row.get('id') or row.get('device_id') or '').strip().lower()
+    if not device_id.startswith('ecosensor'):
+        return JSONResponse({'ok': False, 'error': 'invalid_device_id'}, status_code=400)
+
+    row['id'] = device_id
+    row['device_id'] = device_id
+    if not row.get('timestamp'):
+        row['timestamp'] = time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime())
+        row['time_valid'] = False
+        row['time_source'] = 'estimated_push'
+    elif not row.get('time_source'):
+        row['time_source'] = 'esp'
+
+    client_host = request.client.host if request.client else ''
+    host = client_host or f'{device_id}.local'
+    if client_host:
+        remember_host(client_host, device_id)
+
+    inserted = await asyncio.to_thread(save_measurement, host, row)
+    record_sync_event(
+        device_id,
+        'push_measurement',
+        host=host,
+        inserted=inserted,
+        measurement_id=row.get('measurement_id'),
+        timestamp=row.get('timestamp'),
+    )
+    return JSONResponse({
+        'ok': True,
+        'inserted': inserted,
+        'device_id': device_id,
+        'measurement_id': row.get('measurement_id'),
+    })
 
 
 @app.post('/api/debug/offset-capture/start')

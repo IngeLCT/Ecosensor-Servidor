@@ -424,7 +424,7 @@ async def sync_all_active_measurements() -> list[dict[str, Any] | None]:
     )
 
 
-async def background_sync_loop(interval_seconds: float = 60.0) -> None:
+async def background_sync_loop(interval_seconds: float = 300.0) -> None:
     while True:
         try:
             await sync_all_active_measurements()
