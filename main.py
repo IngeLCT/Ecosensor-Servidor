@@ -120,7 +120,7 @@ async def debug_temp_hum_sample(request: Request) -> JSONResponse:
         return JSONResponse({'ok': False, 'error': 'json_object_required'}, status_code=400)
 
     device_id = str(payload.get('device_id') or 'unknown').strip().lower() or 'unknown'
-    if device_id != 'ecosensor01':
+    if device_id not in {'ecosensor01', 'ecosensor02'}:
         return JSONResponse({'ok': True, 'debug': 'temp_hum_sample_ignored', 'device_id': device_id})
 
     print(
