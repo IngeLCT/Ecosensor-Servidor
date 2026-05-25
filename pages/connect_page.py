@@ -254,7 +254,7 @@ def config_page(request: Request) -> None:
                 async def update_device(did: str = device_id) -> None:
                     result = await start_device_ota(did)
                     if result.get('ok'):
-                        ui.notify(f'OTA iniciada para {did}. Actualizando solo el estado automáticamente.', color='positive')
+                        ui.notify(f'OTA iniciada para {did}.', color='positive')
                         start_ota_auto_refresh(did)
                     else:
                         ui.notify(f'No se pudo iniciar OTA para {did}: {result.get("error")}', color='negative')
