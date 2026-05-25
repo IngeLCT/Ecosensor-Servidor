@@ -7,7 +7,6 @@ from typing import Any
 from nicegui import app, ui
 
 from services.device_registry import active_device_options, ensure_active_devices
-from services.measurement_sync import sync_sensor_measurements
 from shared.formatters import device_display_name
 from shared.styles import add_styles
 from storage.measurements_store import graph_rows_all, graph_rows_history
@@ -536,8 +535,8 @@ def _build_figure(frame: Any, spec: ChartSpec, minutes: int) -> Any:
 
 async def _load_frame(device_id: str | None, limit: int = INITIAL_FETCH_LIMIT) -> tuple[Any | None, str | None]:
     try:
-        if device_id:
-            await sync_sensor_measurements(device_id)
+        # Las gráficas en tiempo real solo leen SQLite. La sincronización con los ESP32
+        # corre en background_sync_loop para evitar bloquear o cortar clientes NiceGUI.
         rows = await asyncio.to_thread(graph_rows_history, limit, device_id)
         return _rows_to_frame(rows), None
     except ModuleNotFoundError as exc:
