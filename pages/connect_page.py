@@ -45,7 +45,6 @@ def config_page(request: Request) -> None:
         with ui.element('div').classes('connect-card'):
             ui.label('LCT Didacticos').classes('connect-title')
             ui.image('/static/LCT.png').props('fit=contain no-spinner').classes('connect-logo')
-            ui.label(device_display_name()).classes('connect-subtitle')
             with ui.element('div').classes('connect-box'):
                 ui.label('Seleccione el EcoSensor a configurar').classes('connect-label')
                 sensor_select = ui.select({}, value=None).props('outlined dense').classes('w-full connect-input device-select')
