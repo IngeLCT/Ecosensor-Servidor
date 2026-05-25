@@ -9,7 +9,7 @@ from nicegui import app, ui
 from services.device_registry import active_device_options, ensure_active_devices
 from shared.formatters import device_display_name
 from shared.styles import add_styles
-from storage.measurements_store import graph_rows_all, graph_rows_history
+from storage.measurements_store import graph_latest_row, graph_rows_all, graph_rows_history
 
 
 MAX_BARS = 24
@@ -556,6 +556,7 @@ def _graph_page(page_title: str, charts: list[ChartSpec]) -> None:
     buttons: dict[str, list[Any]] = {spec.key: [] for spec in charts}
     frame_cache: Any | None = None
     selected_device_id: str | None = None
+    last_realtime_signature: tuple[Any, ...] | None = None
     refresh_running = False
 
     with ui.element('div').classes('dashboard'):
@@ -629,7 +630,7 @@ def _graph_page(page_title: str, charts: list[ChartSpec]) -> None:
             ui.timer(delay_seconds, refresh, once=True)
 
     async def refresh() -> None:
-        nonlocal frame_cache, refresh_running
+        nonlocal frame_cache, last_realtime_signature, refresh_running
         if not client_alive() or refresh_running:
             return
         refresh_running = True
@@ -638,12 +639,27 @@ def _graph_page(page_title: str, charts: list[ChartSpec]) -> None:
             await refresh_sensor_options()
             if not selected_device_id:
                 status.set_text('No hay EcoSensor activos disponibles.')
+                last_realtime_signature = None
                 return
+
+            latest = await asyncio.to_thread(graph_latest_row, selected_device_id)
+            realtime_signature = (
+                selected_device_id,
+                (latest or {}).get('_row_id'),
+                (latest or {}).get('fecha'),
+                (latest or {}).get('hora'),
+            )
+            if frame_cache is not None and realtime_signature == last_realtime_signature:
+                status.set_text('')
+                next_delay = _seconds_until_next_realtime_refresh(frame_cache)
+                return
+
             frame, error = await _load_frame(selected_device_id)
             if error:
                 status.set_text(error)
                 return
             frame_cache = frame
+            last_realtime_signature = realtime_signature
             status.set_text('')
             for spec in charts:
                 await redraw_one(spec)

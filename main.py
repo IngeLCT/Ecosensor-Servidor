@@ -45,6 +45,7 @@ app.add_static_files('/static', STATIC_DIR)
 _background_sync_task: asyncio.Task | None = None
 _TEMP_HUM_LOG_DEVICE_ORDER = ('ecosensor01', 'ecosensor02', 'ecosensor03')
 _temp_hum_latest_samples: dict[str, dict] = {}
+_temp_hum_last_printed_signature: tuple | None = None
 
 
 def _start_background_sync() -> None:
@@ -125,18 +126,22 @@ async def debug_temp_hum_sample(request: Request) -> JSONResponse:
     if device_id not in _TEMP_HUM_LOG_DEVICE_ORDER:
         return JSONResponse({'ok': True, 'debug': 'temp_hum_sample_ignored', 'device_id': device_id})
 
+    global _temp_hum_last_printed_signature
     _temp_hum_latest_samples[device_id] = payload
     if all(item in _temp_hum_latest_samples for item in _TEMP_HUM_LOG_DEVICE_ORDER):
-        lines = ['[ecosensor-temp-hum-sample]']
-        for item in _TEMP_HUM_LOG_DEVICE_ORDER:
-            sample = _temp_hum_latest_samples[item]
-            lines.append(
-                f'{item} '
-                f'sample={sample.get("sample_slot")} '
-                f'scd40_temp={sample.get("scd_temp")} scd40_hum={sample.get("scd_hum")} '
-                f'sen55_temp={sample.get("sen_temp")} sen55_hum={sample.get("sen_hum")}'
-            )
-        print('\n'.join(lines), flush=True)
+        signature = tuple(_temp_hum_latest_samples[item].get('sample_slot') for item in _TEMP_HUM_LOG_DEVICE_ORDER)
+        if signature != _temp_hum_last_printed_signature:
+            _temp_hum_last_printed_signature = signature
+            lines = ['[ecosensor-temp-hum-sample]']
+            for item in _TEMP_HUM_LOG_DEVICE_ORDER:
+                sample = _temp_hum_latest_samples[item]
+                lines.append(
+                    f'{item} '
+                    f'sample={sample.get("sample_slot")} '
+                    f'scd40_temp={sample.get("scd_temp")} scd40_hum={sample.get("scd_hum")} '
+                    f'sen55_temp={sample.get("sen_temp")} sen55_hum={sample.get("sen_hum")}'
+                )
+            print('\n'.join(lines), flush=True)
 
     capture = add_offset_capture_sample(payload)
     return JSONResponse({'ok': True, 'debug': 'temp_hum_sample_printed', 'capture': capture})
