@@ -127,8 +127,13 @@ async def _save_remote_rows(
     return inserted_count, min_seen_source_id, max_seen_source_id
 
 
-async def sync_sensor_measurements(device_id: str | None = None) -> dict[str, Any] | None:
-    """Sincroniza un EcoSensor concreto y devuelve su última medición conocida."""
+async def sync_sensor_measurements(device_id: str | None = None, *, fetch_latest: bool = True) -> dict[str, Any] | None:
+    """Sincroniza un EcoSensor concreto y devuelve su última medición conocida.
+
+    Cuando ``fetch_latest`` es False no consulta ``/lecturas``. Esto permite que
+    las pantallas que ya reciben datos por push solo hagan comprobación de vida,
+    sincronización de hora y recuperación de histórico faltante desde SD.
+    """
     active = await ensure_device_active(device_id)
     if not active:
         target_id = (device_id or DEVICE_ID).strip().lower() or DEVICE_ID
@@ -173,35 +178,47 @@ async def sync_sensor_measurements(device_id: str | None = None) -> dict[str, An
             completed_history_sync = False
             local_floor_id = await asyncio.to_thread(latest_source_id, selected_device_id)
 
-            # Prioridad 1: pedir primero la última medición. Esto mantiene el
-            # dashboard y las gráficas de tiempo real frescas aunque falte
-            # rellenar histórico de SD.
-            lecturas = await fetch_json(endpoints_now['lecturas'], timeout=3.0)
-            data = lecturas.get('data') if lecturas.get('ok') else None
             latest_inserted = False
             latest_remote_id = 0
-            if isinstance(data, dict) and data.get('valid'):
-                row = row_from_payload(data)
-                if row:
-                    row['device_id'] = selected_device_id
-                    row['id'] = selected_device_id
-                    _enrich_time_metadata(row, data.get('current_uptime_s'), datetime.now().astimezone(), data.get('boot_id'))
-                    try:
-                        latest_remote_id = int(row.get('measurement_id') or 0)
-                    except (TypeError, ValueError):
-                        latest_remote_id = 0
-                    latest_inserted = await asyncio.to_thread(save_measurement, host_now, row)
-            latest_valid = bool(isinstance(data, dict) and data.get('valid'))
+            latest_valid = False
+
+            if fetch_latest:
+                # Prioridad 1: pedir primero la última medición. Esto mantiene
+                # compatibilidad con pantallas/flujos que aún no dependen solo
+                # del push del ESP32.
+                lecturas = await fetch_json(endpoints_now['lecturas'], timeout=3.0)
+                data = lecturas.get('data') if lecturas.get('ok') else None
+                if isinstance(data, dict) and data.get('valid'):
+                    row = row_from_payload(data)
+                    if row:
+                        row['device_id'] = selected_device_id
+                        row['id'] = selected_device_id
+                        _enrich_time_metadata(row, data.get('current_uptime_s'), datetime.now().astimezone(), data.get('boot_id'))
+                        try:
+                            latest_remote_id = int(row.get('measurement_id') or 0)
+                        except (TypeError, ValueError):
+                            latest_remote_id = 0
+                        latest_inserted = await asyncio.to_thread(save_measurement, host_now, row)
+                latest_valid = bool(isinstance(data, dict) and data.get('valid'))
+                response_summary = summarize_response(lecturas)
+            else:
+                status_data = active.get('status') if isinstance(active.get('status'), dict) else {}
+                try:
+                    latest_remote_id = int(status_data.get('last_measurement_id') or 0)
+                except (TypeError, ValueError):
+                    latest_remote_id = 0
+                response_summary = 'skipped_fetch_latest'
+
             record_sync_event(
                 selected_device_id,
                 'fetch_latest',
                 host=host_now,
-                ok=bool(lecturas.get('ok')),
+                ok=True,
                 valid=latest_valid,
                 inserted=latest_inserted,
                 local_floor_id=local_floor_id,
                 latest_remote_id=latest_remote_id,
-                response=summarize_response(lecturas),
+                response=response_summary,
             )
 
             # Prioridad 2: si el firmware nuevo está disponible, rellenar hacia

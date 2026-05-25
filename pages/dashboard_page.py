@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any
 
 from nicegui import app, ui
@@ -5,6 +6,7 @@ from nicegui import app, ui
 from services.device_registry import active_device_options, ensure_active_devices, registry_revision
 from services.measurement_sync import sync_sensor_measurements
 from shared.formatters import format_value
+from storage.measurements_store import get_latest_measurement
 from shared.styles import add_styles
 from pages.pollutants_modal import pollutants_info_card
 
@@ -127,8 +129,7 @@ def dashboard() -> None:
         sensor_select.value = selected_device_id
         sensor_select.update()
 
-    async def refresh() -> None:
-        await refresh_sensor_options()
+    async def refresh_from_sqlite() -> None:
         if not selected_device_id:
             render_table(None)
             date_info.set_content('')
@@ -136,7 +137,7 @@ def dashboard() -> None:
             connection_info.set_text('')
             return
 
-        row = await sync_sensor_measurements(selected_device_id)
+        row = await asyncio.to_thread(get_latest_measurement, selected_device_id)
         render_table(row)
         timestamp = (row or {}).get('timestamp') or ''
         date_part, time_part = split_timestamp(timestamp)
@@ -147,6 +148,16 @@ def dashboard() -> None:
         else:
             connection_info.set_text('EcoSensor activo, sin mediciones almacenadas todavía.')
 
+    async def sync_then_refresh() -> None:
+        await refresh_sensor_options()
+        if selected_device_id:
+            await sync_sensor_measurements(selected_device_id, fetch_latest=False)
+        await refresh_from_sqlite()
+
+    async def refresh_options_and_data() -> None:
+        await refresh_sensor_options()
+        await refresh_from_sqlite()
+
     async def on_sensor_change(event: Any) -> None:
         nonlocal selected_device_id
         selected_device_id = str(event.value or '') or None
@@ -154,15 +165,15 @@ def dashboard() -> None:
             app.storage.user['selected_device_id'] = selected_device_id
         else:
             app.storage.user.pop('selected_device_id', None)
-        await refresh()
+        await sync_then_refresh()
 
     async def refresh_if_registry_changed() -> None:
         current = registry_revision()
         if current != seen_registry_revision['value']:
             seen_registry_revision['value'] = current
-            await refresh()
+            await refresh_options_and_data()
 
     sensor_select.on_value_change(on_sensor_change)
     ui.timer(1.0, refresh_if_registry_changed)
-    ui.timer(60.0, refresh)
-    ui.timer(0.1, refresh, once=True)
+    ui.timer(10.0, refresh_from_sqlite)
+    ui.timer(0.1, sync_then_refresh, once=True)
