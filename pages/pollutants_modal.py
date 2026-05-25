@@ -26,14 +26,14 @@ POLLUTANTS = {
         'html': '''
             <h4>Puntos clave:</h4>
             <ul>
-                <li>Las partículas pequeñas en el aire, especialmente las inferiores a <b>&lt; 2.5 μm (0,0025 mm)</b>,
-                son peligrosas y pueden causar graves consecuencias para la salud a largo plazo.</li>
+                <li>Las partículas pequeñas en el aire, especialmente las inferiores a <b>< 2.5 μm (0,0025 mm)</b>, son 
+                peligrosas y pueden causar graves consecuencias para la salud a largo plazo.</li>
                 <li>Existen índices y colores contradictorios en diferentes países. Asegúrese de conocer el valor de PM2.5 en μg/m³.</li>
                 <li>No existen niveles seguros de PM. Deben ser lo más bajos posible. La OMS recomienda un promedio anual inferior a 5 μg/m³.</li>
                 <li>Utilice purificadores de aire con filtro <b>HEPA</b> en interiores o mascarillas <b>N95</b> en exteriores para reducir su exposición.</li>
             </ul>
-            <h5>Organización Mundial de la Salud: Mantenga el nivel anual de PM2.5 por debajo de <b>5 μg/m³</b>. Cuanto más cercano a cero, mejor.</h5>
-            <h5>Índice de Calidad del Aire (ICA). Esperanza de vida que se pierde debido a la contaminación del aire por PM. https://aqli.epic.uchicago.edu/the-index/</h5>
+            <h5><b>Organización Mundial de la Salud: Mantenga el nivel anual de PM2.5 por debajo de 5 μg/m³. Cuanto más cercano a cero, mejor.</b></h5>
+            <h5><b>Índice de Calidad del Aire (ICA). Esperanza de vida que se pierde debido a la contaminación del aire por PM. https://aqli.epic.uchicago.edu/the-index/ </b></h5>
         ''',
     },
     'co2': {
