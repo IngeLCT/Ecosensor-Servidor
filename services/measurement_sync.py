@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime, timedelta
+from time import monotonic
 from typing import Any
 
 from config import DEVICE_ID
@@ -17,8 +18,10 @@ from shared.formatters import row_from_payload
 from storage.measurements_store import get_latest_measurement, latest_source_id, missing_source_id_ranges, save_measurement
 
 _sync_locks: dict[str, asyncio.Lock] = {}
+_synced_notice_printed: set[str] = set()
 SYNC_CHUNK_SIZE = 25
 SYNC_MAX_BATCHES_PER_CYCLE = 300
+SYNC_PROGRESS_INTERVAL_SECONDS = 60.0
 
 
 def _lock_for(device_id: str) -> asyncio.Lock:
@@ -174,6 +177,8 @@ async def sync_sensor_measurements(device_id: str | None = None, *, fetch_latest
         total_received = 0
         batches = 0
         sync_started_printed = False
+        suppress_zero_sync_log = False
+        last_progress_print = monotonic()
 
         if endpoints_now['lecturas']:
             completed_history_sync = False
@@ -242,6 +247,7 @@ async def sync_sensor_measurements(device_id: str | None = None, *, fetch_latest
 
             if latest_remote_id > 0:
                 if missing_ranges:
+                    _synced_notice_printed.discard(selected_device_id)
                     ranges_preview = ','.join(
                         f"{start_id}-{end_id}" if start_id != end_id else str(start_id)
                         for start_id, end_id in missing_ranges[-4:]
@@ -251,14 +257,18 @@ async def sync_sensor_measurements(device_id: str | None = None, *, fetch_latest
                         f"{pending_count} datos por sincronizar; rangos={ranges_preview}",
                         flush=True,
                     )
+                    sync_started_printed = True
                 else:
-                    print(
-                        f"[measurement_sync] inicio sincronizacion {selected_device_id}: 0 datos por sincronizar",
-                        flush=True,
-                    )
+                    suppress_zero_sync_log = True
+                    if sync_history and selected_device_id not in _synced_notice_printed:
+                        print(
+                            f"[measurement_sync] {selected_device_id}: sincronizado; 0 datos pendientes",
+                            flush=True,
+                        )
+                        _synced_notice_printed.add(selected_device_id)
             else:
                 print(f"[measurement_sync] inicio sincronizacion {selected_device_id}", flush=True)
-            sync_started_printed = True
+                sync_started_printed = True
 
             # Recuperación de histórico por rangos faltantes concretos.
             # Se recorre de IDs altos a bajos para rellenar primero lo más reciente.
@@ -309,6 +319,19 @@ async def sync_sensor_measurements(device_id: str | None = None, *, fetch_latest
                             response=summarize_response(missing),
                         )
 
+                        now_progress = monotonic()
+                        if pending_count > 0 and now_progress - last_progress_print >= SYNC_PROGRESS_INTERVAL_SECONDS:
+                            synced_so_far = min(total_received, pending_count)
+                            remaining = max(0, pending_count - synced_so_far)
+                            print(
+                                f"[measurement_sync] progreso {selected_device_id}: "
+                                f"{synced_so_far}/{pending_count} recibidos, "
+                                f"{total_inserted} insertados, faltan {remaining}, "
+                                f"lotes={batches}, ultimo_rango={chunk_from}-{chunk_to}",
+                                flush=True,
+                            )
+                            last_progress_print = now_progress
+
                         if not ok and not rows:
                             print(
                                 f"[measurement_sync] {selected_device_id}: bloque sin progreso "
@@ -351,11 +374,27 @@ async def sync_sensor_measurements(device_id: str | None = None, *, fetch_latest
         if not row:
             row = await asyncio.to_thread(get_latest_measurement, selected_device_id)
 
-        print(
-            f"[measurement_sync] fin sincronizacion {selected_device_id}: "
-            f"{total_inserted} datos sincronizados",
-            flush=True,
-        )
+        if not suppress_zero_sync_log:
+            if sync_history and sync_started_printed:
+                final_remaining = max(0, pending_count - min(total_received, pending_count)) if 'pending_count' in locals() else 0
+                if final_remaining > 0:
+                    print(
+                        f"[measurement_sync] fin sincronizacion {selected_device_id}: "
+                        f"{total_inserted} datos sincronizados; faltan {final_remaining}",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        f"[measurement_sync] fin sincronizacion {selected_device_id}: "
+                        f"{total_inserted} datos sincronizados",
+                        flush=True,
+                    )
+            else:
+                print(
+                    f"[measurement_sync] fin sincronizacion {selected_device_id}: "
+                    f"{total_inserted} datos sincronizados",
+                    flush=True,
+                )
 
         record_sync_event(
             selected_device_id,
