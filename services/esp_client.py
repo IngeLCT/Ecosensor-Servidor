@@ -161,6 +161,29 @@ async def sync_time_if_needed(host: str, timeout: float = 4.0) -> dict[str, Any]
     return await asyncio.to_thread(sync_time_if_needed_sync, host, timeout)
 
 
+
+
+def push_host_payload(target_host: str) -> dict[str, str]:
+    payload: dict[str, str] = {}
+    server_ip = _local_ip_for_target(target_host)
+    if server_ip:
+        payload['push_host'] = server_ip
+    return payload
+
+def configure_push_host_sync(host: str, timeout: float = 4.0) -> dict[str, Any]:
+    payload = system_datetime_payload(host)
+    if 'push_host' not in payload:
+        return {'ok': False, 'host': host, 'data': 'server_ip_unavailable'}
+    endpoints = build_endpoints(host)
+    sync_response = post_json_sync(endpoints['time'], payload, timeout=timeout)
+    if not sync_response.get('ok'):
+        sync_response = post_json_sync(endpoints['config'], payload, timeout=timeout)
+    return {'ok': bool(sync_response.get('ok')), 'host': host, 'sync': sync_response, 'push_host': payload.get('push_host')}
+
+
+async def configure_push_host(host: str, timeout: float = 4.0) -> dict[str, Any]:
+    return await asyncio.to_thread(configure_push_host_sync, host, timeout)
+
 async def fetch_readings_since(host: str, after_id: int, limit: int = 25, timeout: float = 20.0) -> dict[str, Any]:
     endpoints = build_endpoints(host)
     if not endpoints['lecturas_since']:

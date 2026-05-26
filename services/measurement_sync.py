@@ -12,7 +12,7 @@ from services.device_registry import (
     host_for_device,
     refresh_active_devices,
 )
-from services.esp_client import build_endpoints, fetch_json, fetch_readings_range, sync_time_if_needed
+from services.esp_client import build_endpoints, configure_push_host, fetch_json, fetch_readings_range, sync_time_if_needed
 from services.sync_debug import record_sync_event, summarize_response
 from shared.formatters import row_from_payload
 from storage.measurements_store import get_latest_measurement, latest_source_id, missing_source_id_ranges, save_measurement
@@ -22,6 +22,8 @@ _synced_notice_printed: set[str] = set()
 SYNC_CHUNK_SIZE = 25
 SYNC_MAX_BATCHES_PER_CYCLE = 300
 SYNC_PROGRESS_INTERVAL_SECONDS = 60.0
+PUSH_HOST_GRACE_SECONDS = 120
+DEFAULT_MEASUREMENT_WINDOW_SECONDS = 300
 
 
 def _lock_for(device_id: str) -> asyncio.Lock:
@@ -71,6 +73,73 @@ def _enrich_time_metadata(item: dict[str, Any], current_uptime_s: Any, server_no
     if estimated > server_now:
         estimated = server_now
     item['timestamp'] = _iso_local(estimated)
+
+
+
+def _parse_dt(value: Any) -> datetime | None:
+    text = str(value or '').strip()
+    if not text:
+        return None
+    if text.endswith('Z'):
+        text = text[:-1] + '+00:00'
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.astimezone()
+    return parsed.astimezone()
+
+
+def _push_overdue(row: dict[str, Any] | None) -> tuple[bool, int, int]:
+    if not row:
+        return False, 0, DEFAULT_MEASUREMENT_WINDOW_SECONDS
+    last_seen = _parse_dt(row.get('received_at')) or _parse_dt(row.get('timestamp'))
+    if not last_seen:
+        return False, 0, DEFAULT_MEASUREMENT_WINDOW_SECONDS
+    try:
+        window_s = int(row.get('window_s') or DEFAULT_MEASUREMENT_WINDOW_SECONDS)
+    except (TypeError, ValueError):
+        window_s = DEFAULT_MEASUREMENT_WINDOW_SECONDS
+    window_s = max(60, window_s)
+    age_s = int((datetime.now().astimezone() - last_seen).total_seconds())
+    return age_s > window_s + PUSH_HOST_GRACE_SECONDS, age_s, window_s
+
+
+def _status_is_active_for_push(status_data: Any) -> bool:
+    if not isinstance(status_data, dict):
+        return False
+    if status_data.get('can_push') is True:
+        return True
+    wifi = str(status_data.get('wifi') or '').strip().lower()
+    sensors = str(status_data.get('sensors') or '').strip().lower()
+    return wifi == 'connected' and sensors == 'running'
+
+
+async def _configure_push_host_if_overdue(device_id: str, host: str, row: dict[str, Any] | None, status_data: Any) -> None:
+    overdue, age_s, window_s = _push_overdue(row)
+    if not overdue or not _status_is_active_for_push(status_data):
+        return
+
+    current_push_host = str((status_data or {}).get('push_host') or '').strip() if isinstance(status_data, dict) else ''
+    result = await configure_push_host(host, timeout=3.0)
+    record_sync_event(
+        device_id,
+        'configure_push_host',
+        host=host,
+        ok=bool(result.get('ok')),
+        age_s=age_s,
+        window_s=window_s,
+        previous_push_host=current_push_host or None,
+        push_host=result.get('push_host'),
+        response=summarize_response(result.get('sync')),
+    )
+    if result.get('ok'):
+        print(
+            f"[measurement_sync] {device_id}: push sin recibir hace {age_s}s; "
+            f"push_host enviado={result.get('push_host')}",
+            flush=True,
+        )
 
 
 def display_host(host: str) -> str:
@@ -145,6 +214,7 @@ async def sync_sensor_measurements(device_id: str | None = None, *, fetch_latest
 
     selected_device_id = str(active['device_id'])
     host_now = str(active['host'])
+    initial_row = await asyncio.to_thread(get_latest_measurement, selected_device_id)
 
     async with _lock_for(selected_device_id):
         record_sync_event(
@@ -170,6 +240,10 @@ async def sync_sensor_measurements(device_id: str | None = None, *, fetch_latest
         )
         if connection.get('ok'):
             host_now = str(connection.get('host') or host_now)
+
+        status_payload = connection.get('status') if isinstance(connection.get('status'), dict) else {}
+        status_data = status_payload.get('data') if isinstance(status_payload.get('data'), dict) else {}
+        await _configure_push_host_if_overdue(selected_device_id, host_now, initial_row, status_data)
 
         endpoints_now = build_endpoints(host_now)
         row = None

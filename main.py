@@ -107,7 +107,8 @@ async def api_measurements_push(request: Request) -> JSONResponse:
         f"NOx={row.get('nox')} | "
         f"CO2={row.get('co2')} | "
         f"Temperatura={row.get('temp')} | "
-        f"Humedad={row.get('hum')}"
+        f"Humedad={row.get('hum')}",
+        flush=True,
     )
 
     inserted = await asyncio.to_thread(save_measurement, host, row)
