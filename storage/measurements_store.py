@@ -587,6 +587,7 @@ def save_measurement(host: str, row: dict[str, Any]) -> bool:
         )
         inserted = cursor.rowcount > 0
         if not inserted and source_id is not None and device_timestamp:
+            prefer_live_source = time_source in {'esp_push', 'esp_live'}
             conn.execute(
                 '''
                 UPDATE measurements
@@ -612,9 +613,12 @@ def save_measurement(host: str, row: dict[str, Any]) -> bool:
                     sen_hum = COALESCE(:sen_hum, sen_hum),
                     window_s = COALESCE(:window_s, window_s)
                 WHERE device_id = :device_id AND source_id = :source_id
-                  AND COALESCE(time_source, '') != 'esp'
+                  AND (
+                    COALESCE(time_source, '') NOT IN ('esp_push', 'esp_live')
+                    OR :prefer_live_source = 1
+                  )
                 ''',
-                values,
+                {**values, 'prefer_live_source': 1 if prefer_live_source else 0},
             )
         conn.commit()
         return inserted

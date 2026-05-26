@@ -86,7 +86,7 @@ async def api_measurements_push(request: Request) -> JSONResponse:
         row['time_valid'] = False
         row['time_source'] = 'estimated_push'
     elif not row.get('time_source'):
-        row['time_source'] = 'esp'
+        row['time_source'] = 'esp_push'
 
     client_host = request.client.host if request.client else ''
     host = client_host or f'{device_id}.local'

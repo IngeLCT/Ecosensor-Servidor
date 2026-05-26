@@ -200,6 +200,8 @@ async def sync_sensor_measurements(device_id: str | None = None, *, fetch_latest
                         row['device_id'] = selected_device_id
                         row['id'] = selected_device_id
                         _enrich_time_metadata(row, data.get('current_uptime_s'), datetime.now().astimezone(), data.get('boot_id'))
+                        if row.get('time_source') == 'esp':
+                            row['time_source'] = 'esp_live'
                         try:
                             latest_remote_id = int(row.get('measurement_id') or 0)
                         except (TypeError, ValueError):
