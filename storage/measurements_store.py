@@ -287,6 +287,41 @@ def latest_contiguous_source_id(device_id: str = 'ecosensor01') -> int:
     return latest_contiguous
 
 
+def missing_source_id_ranges(device_id: str = 'ecosensor01', remote_last_id: int = 0) -> list[tuple[int, int]]:
+    """Rangos de source_id faltantes en SQLite, inclusivos y ascendentes."""
+    remote_last_id = max(0, int(remote_last_id or 0))
+    if remote_last_id <= 0:
+        return []
+
+    ensure_db(device_id)
+    with sqlite3.connect(db_file_for_device(device_id)) as conn:
+        present = [
+            int(row[0])
+            for row in conn.execute(
+                '''
+                SELECT DISTINCT source_id
+                FROM measurements
+                WHERE device_id = ? AND source_id IS NOT NULL
+                  AND source_id BETWEEN 1 AND ?
+                ORDER BY source_id ASC
+                ''',
+                (device_id, remote_last_id),
+            )
+        ]
+
+    ranges: list[tuple[int, int]] = []
+    expected = 1
+    for source_id in present:
+        if source_id < expected:
+            continue
+        if source_id > expected:
+            ranges.append((expected, source_id - 1))
+        expected = source_id + 1
+    if expected <= remote_last_id:
+        ranges.append((expected, remote_last_id))
+    return ranges
+
+
 def _split_device_timestamp(timestamp: str | None) -> tuple[str, str]:
     value = (timestamp or '').strip()
     if not value:

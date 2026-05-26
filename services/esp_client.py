@@ -36,6 +36,7 @@ def build_endpoints(host: str) -> dict[str, str]:
         'status': f'{base_url}/status' if base_url else '',
         'lecturas': f'{base_url}/lecturas' if base_url else '',
         'lecturas_since': f'{base_url}/lecturas/since' if base_url else '',
+        'lecturas_range': f'{base_url}/lecturas/range' if base_url else '',
         'lecturas_recent': f'{base_url}/lecturas/recent' if base_url else '',
         'config': f'{base_url}/config' if base_url else '',
         'time': f'{base_url}/time' if base_url else '',
@@ -144,12 +145,29 @@ async def sync_time_if_needed(host: str, timeout: float = 4.0) -> dict[str, Any]
     return await asyncio.to_thread(sync_time_if_needed_sync, host, timeout)
 
 
-async def fetch_readings_since(host: str, after_id: int, limit: int = 500, timeout: float = 6.0) -> dict[str, Any]:
+async def fetch_readings_since(host: str, after_id: int, limit: int = 25, timeout: float = 20.0) -> dict[str, Any]:
     endpoints = build_endpoints(host)
     if not endpoints['lecturas_since']:
         return {'ok': False, 'status': 0, 'url': '', 'data': 'missing host'}
-    query = urlencode({'after': max(0, int(after_id)), 'limit': max(1, int(limit)), 'timeout_ms': max(250, int(timeout * 800))})
+    query = urlencode({
+        'after': max(0, int(after_id)),
+        'limit': max(1, int(limit)),
+        'timeout_ms': max(250, int(timeout * 1000)),
+    })
     return await fetch_json(f"{endpoints['lecturas_since']}?{query}", timeout=timeout)
+
+
+async def fetch_readings_range(host: str, from_id: int, to_id: int, limit: int = 25, timeout: float = 30.0) -> dict[str, Any]:
+    endpoints = build_endpoints(host)
+    if not endpoints['lecturas_range']:
+        return {'ok': False, 'status': 0, 'url': '', 'data': 'missing host'}
+    query = urlencode({
+        'from': max(1, int(from_id)),
+        'to': max(1, int(to_id)),
+        'limit': max(1, int(limit)),
+        'timeout_ms': max(250, int(timeout * 1000)),
+    })
+    return await fetch_json(f"{endpoints['lecturas_range']}?{query}", timeout=timeout)
 
 
 async def fetch_recent_readings(host: str, after_id: int, before_id: int = 0, limit: int = 25, timeout: float = 4.0) -> dict[str, Any]:
