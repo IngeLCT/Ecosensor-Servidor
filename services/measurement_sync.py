@@ -135,9 +135,15 @@ async def _configure_push_host_if_overdue(device_id: str, host: str, row: dict[s
         response=summarize_response(result.get('sync')),
     )
     if result.get('ok'):
+        confirm = result.get('status') if isinstance(result.get('status'), dict) else {}
+        confirm_data = confirm.get('data') if isinstance(confirm.get('data'), dict) else {}
+        reported_push_host = confirm_data.get('push_host') if isinstance(confirm_data, dict) else None
+        can_push = confirm_data.get('can_push') if isinstance(confirm_data, dict) else None
+        wifi = confirm_data.get('wifi') if isinstance(confirm_data, dict) else None
         print(
             f"[measurement_sync] {device_id}: push sin recibir hace {age_s}s; "
-            f"push_host enviado={result.get('push_host')}",
+            f"push_host enviado={result.get('push_host')}; "
+            f"reportado={reported_push_host}; wifi={wifi}; can_push={can_push}",
             flush=True,
         )
 

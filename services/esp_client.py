@@ -1,6 +1,8 @@
 import asyncio
 import json
+import re
 import socket
+import subprocess
 from datetime import datetime
 from typing import Any
 
@@ -123,17 +125,111 @@ def candidate_hosts(saved_host: str, default_host: str) -> list[str]:
     return hosts
 
 
-def _local_ip_for_target(target_host: str) -> str | None:
-    clean_host = normalize_host_input(target_host).split(':', 1)[0]
-    if not clean_host:
-        return None
+def _strip_host_port(host: str) -> str:
+    clean = normalize_host_input(host)
+    if clean.startswith('[') and ']' in clean:
+        return clean[1:clean.index(']')]
+    return clean.rsplit(':', 1)[0] if ':' in clean and clean.count(':') == 1 else clean
+
+
+def _same_ipv4_24(ip_a: str, ip_b: str) -> bool:
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.settimeout(0.5)
-            sock.connect((clean_host, 80))
-            return sock.getsockname()[0]
+        a = [int(part) for part in ip_a.split('.')]
+        b = [int(part) for part in ip_b.split('.')]
+    except ValueError:
+        return False
+    return len(a) == 4 and len(b) == 4 and a[:3] == b[:3]
+
+
+def _resolve_ipv4_hosts(host: str) -> list[str]:
+    clean_host = _strip_host_port(host)
+    if not clean_host:
+        return []
+    try:
+        socket.inet_aton(clean_host)
+        return [clean_host]
     except OSError:
+        pass
+
+    resolved: list[str] = []
+    try:
+        infos = socket.getaddrinfo(clean_host, None, socket.AF_INET, socket.SOCK_STREAM)
+    except OSError:
+        return []
+    for info in infos:
+        ip = str(info[4][0])
+        if ip and ip not in resolved:
+            resolved.append(ip)
+    return resolved
+
+
+def _local_ipv4_candidates() -> list[str]:
+    candidates: list[str] = []
+
+    def add(ip: str) -> None:
+        if not ip or ip.startswith('127.') or ip == '0.0.0.0':
+            return
+        if ip not in candidates:
+            candidates.append(ip)
+
+    try:
+        hostname = socket.gethostname()
+        for info in socket.getaddrinfo(hostname, None, socket.AF_INET, socket.SOCK_STREAM):
+            add(str(info[4][0]))
+    except OSError:
+        pass
+
+    try:
+        for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
+            add(str(ip))
+    except OSError:
+        pass
+
+    # En Windows, gethostname/getaddrinfo no siempre lista todas las interfaces
+    # activas. Como el instalador/servidor es local, usar ipconfig como respaldo
+    # evita enviar la IP de otra red cuando el EcoSensor está en un AP aislado.
+    commands = (
+        ['ipconfig'],
+        ['ip', '-4', 'addr', 'show'],
+        ['ifconfig'],
+    )
+    for command in commands:
+        try:
+            output = subprocess.check_output(command, text=True, stderr=subprocess.DEVNULL, timeout=1.5)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        for ip in re.findall(r'(?<!\d)(?:\d{1,3}\.){3}\d{1,3}(?!\d)', output):
+            parts = ip.split('.')
+            if all(part.isdigit() and 0 <= int(part) <= 255 for part in parts):
+                add(ip)
+
+    return candidates
+
+
+def _local_ip_for_target(target_host: str) -> str | None:
+    target_ips = _resolve_ipv4_hosts(target_host)
+    if not target_ips:
         return None
+
+    local_candidates = _local_ipv4_candidates()
+    for target_ip in target_ips:
+        for local_ip in local_candidates:
+            if _same_ipv4_24(local_ip, target_ip):
+                return local_ip
+
+    # Fallback: preguntar a la tabla de rutas usando la IP ya resuelta. Esto evita
+    # depender de mDNS al calcular la IP que recibirá el EcoSensor.
+    for target_ip in target_ips:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.settimeout(0.5)
+                sock.connect((target_ip, 80))
+                local_ip = sock.getsockname()[0]
+                if local_ip and not local_ip.startswith('127.'):
+                    return local_ip
+        except OSError:
+            continue
+    return None
 
 
 def sync_time_if_needed_sync(host: str, timeout: float = 4.0) -> dict[str, Any]:
@@ -178,7 +274,14 @@ def configure_push_host_sync(host: str, timeout: float = 4.0) -> dict[str, Any]:
     sync_response = post_json_sync(endpoints['time'], payload, timeout=timeout)
     if not sync_response.get('ok'):
         sync_response = post_json_sync(endpoints['config'], payload, timeout=timeout)
-    return {'ok': bool(sync_response.get('ok')), 'host': host, 'sync': sync_response, 'push_host': payload.get('push_host')}
+    confirm_status = fetch_json_sync(endpoints['status'], timeout=timeout) if sync_response.get('ok') else None
+    return {
+        'ok': bool(sync_response.get('ok')),
+        'host': host,
+        'sync': sync_response,
+        'status': confirm_status,
+        'push_host': payload.get('push_host'),
+    }
 
 
 async def configure_push_host(host: str, timeout: float = 4.0) -> dict[str, Any]:
