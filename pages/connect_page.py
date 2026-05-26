@@ -113,19 +113,20 @@ def config_page(request: Request) -> None:
         if not device_id or not host:
             return
 
+        display_name = device_display_name(device_id)
         detected = await probe_host(host, timeout=1.5)
         if not detected:
-            ui.notify(f'No se pudo conectar a {device_id}. Revisa red/mDNS.', color='negative')
+            ui.notify(f'No se pudo conectar a {display_name}. Revisa red/mDNS.', color='negative')
             return
 
         detected_host = str(detected.get('host') or host)
         result = await sync_time_if_needed(detected_host, timeout=3.0)
         if result.get('synced'):
-            ui.notify(f'{device_id} conectado y fecha/hora sincronizada.', color='positive')
+            ui.notify(f'{display_name} conectado y fecha/hora sincronizada.', color='positive')
         elif result.get('ok'):
-            ui.notify(f'{device_id} conectado con fecha/hora válida.', color='positive')
+            ui.notify(f'{display_name} conectado con fecha/hora válida.', color='positive')
         else:
-            ui.notify(f'{device_id} conectado; la hora no se pudo sincronizar, pero se guardó para mediciones.', color='warning')
+            ui.notify(f'{display_name} conectado; la hora no se pudo sincronizar, pero se guardó para mediciones.', color='warning')
 
         remember_host(detected_host, str(detected.get('device_id') or device_id))
         app.storage.user['selected_device_id'] = str(detected.get('device_id') or device_id)
@@ -135,9 +136,10 @@ def config_page(request: Request) -> None:
         device_id, host = await selected_host()
         if not device_id or not host:
             return
+        display_name = device_display_name(device_id)
         with ui.dialog() as dialog, ui.card():
-            ui.label(f'¿Borrar credenciales WiFi de {device_id}?')
-            ui.label('El ESP32 reiniciará y volverá al modo de configuración WiFi.')
+            ui.label(f'¿Borrar credenciales WiFi de {display_name}?')
+            ui.label(f'{display_name} reiniciará y volverá al modo de configuración WiFi.')
             with ui.row().classes('justify-end gap-2'):
                 ui.button('Cancelar', on_click=dialog.close).props('flat')
 
@@ -161,9 +163,10 @@ def config_page(request: Request) -> None:
         device_id, host = await selected_host()
         if not device_id or not host:
             return
+        display_name = device_display_name(device_id)
         with ui.dialog() as dialog, ui.card():
-            ui.label(f'¿Borrar TODO el historial de mediciones de {device_id}?')
-            ui.label('Se borrará el CSV de la SD del ESP32 seleccionado y su base local SQLite del servidor.')
+            ui.label(f'¿Borrar TODO el historial de mediciones de {display_name}?')
+            ui.label(f'Se borrará el CSV de la SD de {display_name} y su base local SQLite del servidor.')
             with ui.row().classes('justify-end gap-2'):
                 ui.button('Cancelar', on_click=dialog.close).props('flat')
 
@@ -171,12 +174,12 @@ def config_page(request: Request) -> None:
                     dialog.close()
                     result = await delete_json(build_endpoints(host)['readings_clear'])
                     if not result.get('ok'):
-                        ui.notify(f'No se pudo borrar CSV del ESP32: {result.get("data")}', color='negative')
+                        ui.notify(f'No se pudo borrar CSV de {display_name}: {result.get("data")}', color='negative')
                         return
                     detected = await probe_host(host, timeout=1.5)
                     target_device_id = str((detected or {}).get('device_id') or device_id)
                     deleted = clear_measurements(target_device_id)
-                    ui.notify(f'Historial de {target_device_id} borrado. Filas locales eliminadas: {deleted}.', color='positive')
+                    ui.notify(f'Historial de {device_display_name(target_device_id)} borrado. Filas locales eliminadas: {deleted}.', color='positive')
                     await refresh_sensor_options()
 
                 ui.button('Borrar historial', on_click=confirm).props('unelevated color=negative')

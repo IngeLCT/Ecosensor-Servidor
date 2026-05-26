@@ -343,8 +343,13 @@ async def sync_sensor_measurements(device_id: str | None = None, *, fetch_latest
                         )
                         _synced_notice_printed.add(selected_device_id)
             else:
-                print(f"[measurement_sync] inicio sincronizacion {selected_device_id}", flush=True)
-                sync_started_printed = True
+                suppress_zero_sync_log = True
+                if sync_history and selected_device_id not in _synced_notice_printed:
+                    print(
+                        f"[measurement_sync] {selected_device_id}: sincronizado; sin ID remoto pendiente",
+                        flush=True,
+                    )
+                    _synced_notice_printed.add(selected_device_id)
 
             # Recuperación de histórico por rangos faltantes concretos.
             # Se recorre de IDs altos a bajos para rellenar primero lo más reciente.
