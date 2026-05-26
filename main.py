@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from nicegui import app, ui
 
 from config import STATIC_DIR, UI_HOST, UI_PORT
-from services.device_registry import active_devices, probe_failures, remember_host
+from services.device_registry import active_devices, mark_device_seen, probe_failures, remember_host
 from services.measurement_sync import background_sync_loop
 from services.ota_manager import OtaError, firmware_file_path, load_manifest, ota_snapshot, start_device_ota
 from services.sync_debug import record_sync_event
@@ -92,6 +92,7 @@ async def api_measurements_push(request: Request) -> JSONResponse:
     host = client_host or f'{device_id}.local'
     if client_host:
         remember_host(client_host, device_id)
+    mark_device_seen(device_id, host, {'device_id': device_id, 'ip': client_host})
 
     print(
         '[push_measurement] '

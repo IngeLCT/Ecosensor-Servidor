@@ -18,6 +18,7 @@ def dashboard() -> None:
 
     selected_device_id: str | None = None
     seen_registry_revision = {'value': registry_revision()}
+    quick_sync_tasks: dict[str, asyncio.Task] = {}
 
     with ui.element('div').classes('dashboard'):
         with ui.element('nav').classes('top-nav'):
@@ -111,8 +112,12 @@ def dashboard() -> None:
 
     async def refresh_sensor_options() -> None:
         nonlocal selected_device_id
-        await ensure_active_devices()
+        # No bloquear el dashboard esperando mDNS/LAN/histórico. Si todavía no
+        # hay sensores activos en memoria, lanza la detección en segundo plano;
+        # los push_measurement también marcan dispositivos activos al instante.
         options = active_device_options()
+        if not options:
+            asyncio.create_task(ensure_active_devices())
         stored_device_id = str(app.storage.user.get('selected_device_id') or '') or None
         if stored_device_id:
             selected_device_id = stored_device_id
@@ -148,10 +153,19 @@ def dashboard() -> None:
         else:
             connection_info.set_text('EcoSensor activo, sin mediciones almacenadas todavía.')
 
+    def schedule_quick_sync(device_id: str | None) -> None:
+        if not device_id:
+            return
+        existing = quick_sync_tasks.get(device_id)
+        if existing and not existing.done():
+            return
+        quick_sync_tasks[device_id] = asyncio.create_task(
+            sync_sensor_measurements(device_id, fetch_latest=True, sync_history=False)
+        )
+
     async def sync_then_refresh() -> None:
         await refresh_sensor_options()
-        if selected_device_id:
-            await sync_sensor_measurements(selected_device_id, fetch_latest=False)
+        schedule_quick_sync(selected_device_id)
         await refresh_from_sqlite()
 
     async def refresh_options_and_data() -> None:
@@ -165,7 +179,8 @@ def dashboard() -> None:
             app.storage.user['selected_device_id'] = selected_device_id
         else:
             app.storage.user.pop('selected_device_id', None)
-        await sync_then_refresh()
+        schedule_quick_sync(selected_device_id)
+        await refresh_from_sqlite()
 
     async def refresh_if_registry_changed() -> None:
         current = registry_revision()
@@ -176,4 +191,4 @@ def dashboard() -> None:
     sensor_select.on_value_change(on_sensor_change)
     ui.timer(1.0, refresh_if_registry_changed)
     ui.timer(10.0, refresh_from_sqlite)
-    ui.timer(0.1, sync_then_refresh, once=True)
+    ui.timer(0.1, refresh_options_and_data, once=True)

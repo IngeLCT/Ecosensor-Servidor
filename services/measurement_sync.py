@@ -127,12 +127,12 @@ async def _save_remote_rows(
     return inserted_count, min_seen_source_id, max_seen_source_id
 
 
-async def sync_sensor_measurements(device_id: str | None = None, *, fetch_latest: bool = True) -> dict[str, Any] | None:
+async def sync_sensor_measurements(device_id: str | None = None, *, fetch_latest: bool = True, sync_history: bool = True) -> dict[str, Any] | None:
     """Sincroniza un EcoSensor concreto y devuelve su última medición conocida.
 
-    Cuando ``fetch_latest`` es False no consulta ``/lecturas``. Esto permite que
-    las pantallas que ya reciben datos por push solo hagan comprobación de vida,
-    sincronización de hora y recuperación de histórico faltante desde SD.
+    Cuando ``fetch_latest`` es False no consulta ``/lecturas``. Cuando
+    ``sync_history`` es False solo deja listo el estado rápido del sensor
+    (vida/hora/última medición) y no recupera histórico desde SD.
     """
     active = await ensure_device_active(device_id)
     if not active:
@@ -225,8 +225,20 @@ async def sync_sensor_measurements(device_id: str | None = None, *, fetch_latest
             if latest_inserted:
                 total_inserted += 1
 
-            missing_ranges = await asyncio.to_thread(missing_source_id_ranges, selected_device_id, latest_remote_id)
-            pending_count = sum((end_id - start_id + 1) for start_id, end_id in missing_ranges)
+            if not sync_history:
+                missing_ranges = []
+                pending_count = 0
+                completed_history_sync = True
+                record_sync_event(
+                    selected_device_id,
+                    'fetch_history_skipped',
+                    host=host_now,
+                    reason='quick_sync_only',
+                    latest_remote_id=latest_remote_id,
+                )
+            else:
+                missing_ranges = await asyncio.to_thread(missing_source_id_ranges, selected_device_id, latest_remote_id)
+                pending_count = sum((end_id - start_id + 1) for start_id, end_id in missing_ranges)
 
             if latest_remote_id > 0:
                 if missing_ranges:

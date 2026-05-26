@@ -350,11 +350,13 @@ def remember_host(host: str, device_id: str | None = None) -> None:
 
 
 def _mark_active(host: str, status_data: dict[str, Any] | None = None, device_id: str | None = None, latency_ms: int | None = None) -> dict[str, Any] | None:
+    global _registry_revision
     host = normalize_host_input(host)
     resolved_device_id = (device_id or _status_device_id(status_data) or device_id_from_host(host) or DEVICE_ID).strip().lower()
     if not _is_real_ecosensor_id(resolved_device_id):
         _mark_probe_failure(host, f'device_id no permitido: {resolved_device_id}')
         return None
+    previous = _active_devices.get(resolved_device_id)
     entry = {
         'device_id': resolved_device_id,
         'host': host,
@@ -365,7 +367,19 @@ def _mark_active(host: str, status_data: dict[str, Any] | None = None, device_id
     }
     _active_devices[resolved_device_id] = entry
     _probe_failures.pop(host, None)
+    if not previous or previous.get('host') != host:
+        _registry_revision += 1
     return entry
+
+
+def mark_device_seen(device_id: str, host: str, status_data: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Marca un EcoSensor como activo sin hacer sondeo de red.
+
+    Se usa cuando el dispositivo ya demostró vida enviando una medición push.
+    Así el dashboard puede listar sensores disponibles inmediatamente, aunque
+    el escaneo mDNS/LAN o la sincronización histórica estén corriendo aparte.
+    """
+    return _mark_active(host, status_data or {'device_id': device_id}, device_id)
 
 
 def _summarize_probe_error(error: Any) -> str:
