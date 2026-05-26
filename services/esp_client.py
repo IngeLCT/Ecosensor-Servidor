@@ -1,7 +1,10 @@
 import asyncio
 import json
+import socket
 from datetime import datetime
 from typing import Any
+
+from config import UI_PORT
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
@@ -120,6 +123,19 @@ def candidate_hosts(saved_host: str, default_host: str) -> list[str]:
     return hosts
 
 
+def _local_ip_for_target(target_host: str) -> str | None:
+    clean_host = normalize_host_input(target_host).split(':', 1)[0]
+    if not clean_host:
+        return None
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.settimeout(0.5)
+            sock.connect((clean_host, 80))
+            return sock.getsockname()[0]
+    except OSError:
+        return None
+
+
 def sync_time_if_needed_sync(host: str, timeout: float = 4.0) -> dict[str, Any]:
     endpoints = build_endpoints(host)
     status = fetch_json_sync(endpoints['status'], timeout=timeout)
@@ -131,7 +147,7 @@ def sync_time_if_needed_sync(host: str, timeout: float = 4.0) -> dict[str, Any]:
     if not needs_sync:
         return {'ok': True, 'host': host, 'status': status, 'synced': False}
 
-    payload = system_datetime_payload()
+    payload = system_datetime_payload(host)
     sync_response = post_json_sync(endpoints['time'], payload, timeout=timeout)
     if not sync_response.get('ok'):
         sync_response = post_json_sync(endpoints['config'], payload, timeout=timeout)
@@ -193,9 +209,14 @@ async def autoconnect_and_sync(saved_host: str, default_host: str) -> dict[str, 
     return last_result
 
 
-def system_datetime_payload() -> dict[str, str]:
+def system_datetime_payload(target_host: str | None = None) -> dict[str, str]:
     now = datetime.now().astimezone()
-    return {
+    payload = {
         'date': now.strftime('%d-%m-%Y'),
         'time': now.strftime('%H:%M:%S'),
     }
+    if target_host:
+        server_ip = _local_ip_for_target(target_host)
+        if server_ip:
+            payload['push_host'] = server_ip
+    return payload
