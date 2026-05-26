@@ -88,7 +88,8 @@ def start_mdns_service() -> None:
     _zeroconf = Zeroconf()
     _zeroconf.register_service(_service_info)
     if PRINT_MDNS_STATUS:
-        print(f'mDNS activo: http://{MDNS_HOSTNAME}.local:{UI_PORT}/ ({', '.join(ips)})')
+        ip_list = ', '.join(ips)
+        print(f'mDNS activo: http://{MDNS_HOSTNAME}.local:{UI_PORT}/ ({ip_list})')
 
 
 def stop_mdns_service() -> None:
