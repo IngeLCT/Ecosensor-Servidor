@@ -170,11 +170,12 @@ async def sync_sensor_measurements(device_id: str | None = None, *, fetch_latest
 
         endpoints_now = build_endpoints(host_now)
         row = None
+        total_inserted = 0
+        total_received = 0
+        batches = 0
+        sync_started_printed = False
 
         if endpoints_now['lecturas']:
-            total_inserted = 0
-            total_received = 0
-            batches = 0
             completed_history_sync = False
             local_floor_id = await asyncio.to_thread(latest_source_id, selected_device_id)
 
@@ -220,6 +221,20 @@ async def sync_sensor_measurements(device_id: str | None = None, *, fetch_latest
                 latest_remote_id=latest_remote_id,
                 response=response_summary,
             )
+
+            if latest_inserted:
+                total_inserted += 1
+
+            if latest_remote_id > 0:
+                pending_count = max(0, latest_remote_id - local_floor_id)
+                print(
+                    f"[measurement_sync] inicio sincronizacion {selected_device_id}: "
+                    f"{pending_count} datos por sincronizar",
+                    flush=True,
+                )
+            else:
+                print(f"[measurement_sync] inicio sincronizacion {selected_device_id}", flush=True)
+            sync_started_printed = True
 
             # Prioridad 2: si el firmware nuevo está disponible, rellenar hacia
             # atrás desde lo más reciente. Así las gráficas obtienen primero los
@@ -390,8 +405,17 @@ async def sync_sensor_measurements(device_id: str | None = None, *, fetch_latest
                     latest_after_id=last_id,
                 )
 
+        if not sync_started_printed:
+            print(f"[measurement_sync] inicio sincronizacion {selected_device_id}", flush=True)
+
         if not row:
             row = await asyncio.to_thread(get_latest_measurement, selected_device_id)
+
+        print(
+            f"[measurement_sync] fin sincronizacion {selected_device_id}: "
+            f"{total_inserted} datos sincronizados",
+            flush=True,
+        )
 
         record_sync_event(
             selected_device_id,
