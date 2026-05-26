@@ -11,14 +11,14 @@ from services.device_registry import (
     host_for_device,
     refresh_active_devices,
 )
-from services.esp_client import build_endpoints, fetch_json, fetch_readings_since, fetch_recent_readings, sync_time_if_needed
+from services.esp_client import build_endpoints, fetch_json, fetch_readings_since, sync_time_if_needed
 from services.sync_debug import record_sync_event, summarize_response
 from shared.formatters import row_from_payload
 from storage.measurements_store import get_latest_measurement, latest_source_id, save_measurement
 
 _sync_locks: dict[str, asyncio.Lock] = {}
 SYNC_CHUNK_SIZE = 25
-SYNC_MAX_BATCHES_PER_CYCLE = 40
+SYNC_MAX_BATCHES_PER_CYCLE = 300
 
 
 def _lock_for(device_id: str) -> asyncio.Lock:
@@ -236,104 +236,12 @@ async def sync_sensor_measurements(device_id: str | None = None, *, fetch_latest
                 print(f"[measurement_sync] inicio sincronizacion {selected_device_id}", flush=True)
             sync_started_printed = True
 
-            # Prioridad 2: si el firmware nuevo está disponible, rellenar hacia
-            # atrás desde lo más reciente. Así las gráficas obtienen primero los
-            # puntos cercanos al tiempo real y no dependen de una recuperación
-            # completa desde el ID viejo.
-            if latest_remote_id > local_floor_id and endpoints_now.get('lecturas_recent'):
-                before_id = latest_remote_id
-                for batch_index in range(1, SYNC_MAX_BATCHES_PER_CYCLE + 1):
-                    recent = await fetch_recent_readings(
-                        host_now,
-                        after_id=local_floor_id,
-                        before_id=before_id,
-                        limit=SYNC_CHUNK_SIZE,
-                        timeout=4.0,
-                    )
-                    recent_data = recent.get('data') if recent.get('ok') else None
-                    rows = recent_data.get('rows') if isinstance(recent_data, dict) else None
-                    rows = rows if isinstance(rows, list) else []
-                    inserted_count = 0
-                    min_seen_source_id = 0
-                    max_seen_source_id = 0
-                    if rows:
-                        inserted_count, min_seen_source_id, max_seen_source_id = await _save_remote_rows(
-                            host_now,
-                            selected_device_id,
-                            rows,
-                            recent_data.get('current_uptime_s') if isinstance(recent_data, dict) else None,
-                            recent_data.get('boot_id') if isinstance(recent_data, dict) else None,
-                        )
-                        total_inserted += inserted_count
-                        total_received += len(rows)
-
-                    batches = batch_index
-                    record_sync_event(
-                        selected_device_id,
-                        'fetch_recent_batch',
-                        host=host_now,
-                        batch=batch_index,
-                        after_id=local_floor_id,
-                        before_id=before_id,
-                        limit=SYNC_CHUNK_SIZE,
-                        ok=bool(recent.get('ok')),
-                        rows=len(rows),
-                        inserted=inserted_count,
-                        min_seen_source_id=min_seen_source_id,
-                        max_seen_source_id=max_seen_source_id,
-                        response=summarize_response(recent),
-                    )
-
-                    if not recent.get('ok'):
-                        break
-                    if not rows:
-                        completed_history_sync = True
-                        break
-                    if min_seen_source_id <= local_floor_id + 1:
-                        completed_history_sync = True
-                        break
-                    if min_seen_source_id <= 0 or min_seen_source_id >= before_id:
-                        record_sync_event(
-                            selected_device_id,
-                            'fetch_recent_stalled',
-                            host=host_now,
-                            after_id=local_floor_id,
-                            before_id=before_id,
-                            min_seen_source_id=min_seen_source_id,
-                        )
-                        break
-                    before_id = min_seen_source_id
-                    if len(rows) < SYNC_CHUNK_SIZE:
-                        completed_history_sync = True
-                        break
-
-                record_sync_event(
-                    selected_device_id,
-                    'fetch_recent_summary',
-                    host=host_now,
-                    batches=batches,
-                    chunk_size=SYNC_CHUNK_SIZE,
-                    rows=total_received,
-                    inserted=total_inserted,
-                    complete=completed_history_sync,
-                    local_floor_id=local_floor_id,
-                    latest_remote_id=latest_remote_id,
-                )
-
-            # Compatibilidad/fallback: para firmware viejo sin /lecturas/recent,
-            # seguir usando /lecturas/since, pero desde el ID anterior al último
-            # guardado antes de insertar la medición fresca.
-            elif latest_remote_id <= local_floor_id:
-                completed_history_sync = True
-                record_sync_event(
-                    selected_device_id,
-                    'fetch_history_skipped',
-                    host=host_now,
-                    reason='latest_not_newer',
-                    local_floor_id=local_floor_id,
-                    latest_remote_id=latest_remote_id,
-                )
-            else:
+            # Recuperación de histórico: usar /lecturas/since como camino principal
+            # y avanzar en bloques pequeños. /lecturas/recent escanea todo el CSV y
+            # en SD grandes puede terminar en sd_scan_timeout antes de llegar al final.
+            # Si /since devuelve timeout pero trae filas parciales, igual se guardan y
+            # se continúa desde el último ID visto para no perder progreso.
+            if latest_remote_id > local_floor_id:
                 last_id = local_floor_id
                 for batch_index in range(1, SYNC_MAX_BATCHES_PER_CYCLE + 1):
                     batch_after_id = last_id
@@ -343,7 +251,7 @@ async def sync_sensor_measurements(device_id: str | None = None, *, fetch_latest
                         limit=SYNC_CHUNK_SIZE,
                         timeout=4.0,
                     )
-                    missing_data = missing.get('data') if missing.get('ok') else None
+                    missing_data = missing.get('data') if isinstance(missing.get('data'), dict) else None
                     rows = missing_data.get('rows') if isinstance(missing_data, dict) else None
                     rows = rows if isinstance(rows, list) else []
                     inserted_count = 0
@@ -361,6 +269,7 @@ async def sync_sensor_measurements(device_id: str | None = None, *, fetch_latest
                         total_received += len(rows)
 
                     batches = batch_index
+                    ok = bool(missing.get('ok'))
                     record_sync_event(
                         selected_device_id,
                         'fetch_since_batch',
@@ -368,28 +277,33 @@ async def sync_sensor_measurements(device_id: str | None = None, *, fetch_latest
                         batch=batch_index,
                         after_id=batch_after_id,
                         limit=SYNC_CHUNK_SIZE,
-                        ok=bool(missing.get('ok')),
+                        ok=ok,
                         rows=len(rows),
                         inserted=inserted_count,
+                        min_seen_source_id=min_seen_source_id,
+                        max_seen_source_id=max_seen_source_id,
                         response=summarize_response(missing),
                     )
 
-                    if not missing.get('ok'):
-                        break
-                    if not rows:
+                    if rows and max_seen_source_id > batch_after_id:
+                        last_id = max_seen_source_id
+                    else:
+                        if not ok:
+                            record_sync_event(
+                                selected_device_id,
+                                'fetch_since_timeout_no_progress',
+                                host=host_now,
+                                after_id=batch_after_id,
+                                response=summarize_response(missing),
+                            )
+                            break
                         completed_history_sync = True
                         break
-                    if max_seen_source_id <= batch_after_id:
-                        record_sync_event(
-                            selected_device_id,
-                            'fetch_since_stalled',
-                            host=host_now,
-                            after_id=batch_after_id,
-                            max_seen_source_id=max_seen_source_id,
-                        )
+
+                    if last_id >= latest_remote_id:
+                        completed_history_sync = True
                         break
-                    last_id = max_seen_source_id
-                    if len(rows) < SYNC_CHUNK_SIZE:
+                    if ok and len(rows) < SYNC_CHUNK_SIZE:
                         completed_history_sync = True
                         break
 
@@ -402,7 +316,19 @@ async def sync_sensor_measurements(device_id: str | None = None, *, fetch_latest
                     rows=total_received,
                     inserted=total_inserted,
                     complete=completed_history_sync,
+                    local_floor_id=local_floor_id,
+                    latest_remote_id=latest_remote_id,
                     latest_after_id=last_id,
+                )
+            else:
+                completed_history_sync = True
+                record_sync_event(
+                    selected_device_id,
+                    'fetch_history_skipped',
+                    host=host_now,
+                    reason='latest_not_newer',
+                    local_floor_id=local_floor_id,
+                    latest_remote_id=latest_remote_id,
                 )
 
         if not sync_started_printed:
@@ -452,6 +378,10 @@ async def sync_all_active_measurements() -> list[dict[str, Any] | None]:
 
 
 async def background_sync_loop(interval_seconds: float = 300.0) -> None:
+    print(
+        f"[measurement_sync] backend iniciado: sincronizacion automatica cada {interval_seconds:.0f}s",
+        flush=True,
+    )
     while True:
         try:
             await sync_all_active_measurements()
