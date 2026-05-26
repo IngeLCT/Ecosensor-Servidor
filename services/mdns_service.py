@@ -1,4 +1,5 @@
 import atexit
+import ipaddress
 import socket
 from typing import Optional
 
@@ -11,19 +12,55 @@ _service_info: Optional[ServiceInfo] = None
 PRINT_MDNS_STATUS = False  # Debug temporal: silenciar consola.
 
 
-def _get_lan_ip() -> str:
-    """Return the preferred LAN IPv4 address without requiring external traffic."""
+def _is_useful_lan_ip(value: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return ip.version == 4 and not ip.is_loopback and not ip.is_unspecified and not ip.is_link_local
+
+
+def _add_ip(addresses: list[str], value: str | None) -> None:
+    if value and _is_useful_lan_ip(value) and value not in addresses:
+        addresses.append(value)
+
+
+def _route_ip_for_target(host: str, port: int) -> str | None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        sock.connect(('8.8.8.8', 80))
+        sock.connect((host, port))
         return sock.getsockname()[0]
     except OSError:
-        try:
-            return socket.gethostbyname(socket.gethostname())
-        except OSError:
-            return '127.0.0.1'
+        return None
     finally:
         sock.close()
+
+
+def _get_lan_ips() -> list[str]:
+    """Return useful local IPv4 addresses without requiring internet access.
+
+    En redes AP aisladas (por ejemplo una Raspberry Pi en modo AP sin internet),
+    escoger IP usando solo 8.8.8.8 puede fallar o elegir una interfaz incorrecta.
+    Por eso anunciamos todas las IPv4 LAN útiles en mDNS.
+    """
+    addresses: list[str] = []
+
+    # Ruta multicast mDNS: funciona incluso sin internet en una LAN/AP local.
+    _add_ip(addresses, _route_ip_for_target('224.0.0.251', 5353))
+
+    # Ruta externa: útil en redes normales con internet.
+    _add_ip(addresses, _route_ip_for_target('8.8.8.8', 80))
+
+    # Direcciones asociadas al hostname local.
+    try:
+        for item in socket.gethostbyname_ex(socket.gethostname())[2]:
+            _add_ip(addresses, item)
+    except OSError:
+        pass
+
+    if not addresses:
+        addresses.append('127.0.0.1')
+    return addresses
 
 
 def start_mdns_service() -> None:
@@ -33,14 +70,14 @@ def start_mdns_service() -> None:
     if _zeroconf is not None:
         return
 
-    ip = _get_lan_ip()
+    ips = _get_lan_ips()
     service_name = f'{MDNS_HOSTNAME}.{MDNS_SERVICE_TYPE}'
     server_name = f'{MDNS_HOSTNAME}.local.'
 
     _service_info = ServiceInfo(
         MDNS_SERVICE_TYPE,
         service_name,
-        addresses=[socket.inet_aton(ip)],
+        addresses=[socket.inet_aton(ip) for ip in ips],
         port=UI_PORT,
         properties={
             'path': '/',
@@ -51,7 +88,7 @@ def start_mdns_service() -> None:
     _zeroconf = Zeroconf()
     _zeroconf.register_service(_service_info)
     if PRINT_MDNS_STATUS:
-        print(f'mDNS activo: http://{MDNS_HOSTNAME}.local:{UI_PORT}/ ({ip})')
+        print(f'mDNS activo: http://{MDNS_HOSTNAME}.local:{UI_PORT}/ ({', '.join(ips)})')
 
 
 def stop_mdns_service() -> None:
