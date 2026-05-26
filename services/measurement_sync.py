@@ -14,7 +14,7 @@ from services.device_registry import (
 from services.esp_client import build_endpoints, fetch_json, fetch_readings_since, sync_time_if_needed
 from services.sync_debug import record_sync_event, summarize_response
 from shared.formatters import row_from_payload
-from storage.measurements_store import get_latest_measurement, latest_source_id, save_measurement
+from storage.measurements_store import get_latest_measurement, latest_contiguous_source_id, save_measurement
 
 _sync_locks: dict[str, asyncio.Lock] = {}
 SYNC_CHUNK_SIZE = 25
@@ -177,7 +177,7 @@ async def sync_sensor_measurements(device_id: str | None = None, *, fetch_latest
 
         if endpoints_now['lecturas']:
             completed_history_sync = False
-            local_floor_id = await asyncio.to_thread(latest_source_id, selected_device_id)
+            local_floor_id = await asyncio.to_thread(latest_contiguous_source_id, selected_device_id)
 
             latest_inserted = False
             latest_remote_id = 0

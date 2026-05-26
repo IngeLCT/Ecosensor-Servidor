@@ -256,6 +256,37 @@ def latest_source_id(device_id: str = 'ecosensor01') -> int:
     return int(value or 0)
 
 
+def latest_contiguous_source_id(device_id: str = 'ecosensor01') -> int:
+    """Devuelve el último source_id sincronizado sin huecos desde 1.
+
+    No basta con MAX(source_id): si llegó por push la medición 970 pero faltan
+    históricos 156..969, MAX=970 haría creer que no falta nada. Esta función
+    encuentra el último ID continuo para reanudar /lecturas/since desde ahí.
+    """
+    ensure_db(device_id)
+    expected = 1
+    latest_contiguous = 0
+    with sqlite3.connect(db_file_for_device(device_id)) as conn:
+        rows = conn.execute(
+            '''
+            SELECT DISTINCT source_id
+            FROM measurements
+            WHERE device_id = ? AND source_id IS NOT NULL AND source_id > 0
+            ORDER BY source_id ASC
+            ''',
+            (device_id,),
+        )
+        for row in rows:
+            source_id = int(row[0] or 0)
+            if source_id < expected:
+                continue
+            if source_id != expected:
+                break
+            latest_contiguous = source_id
+            expected += 1
+    return latest_contiguous
+
+
 def _split_device_timestamp(timestamp: str | None) -> tuple[str, str]:
     value = (timestamp or '').strip()
     if not value:
