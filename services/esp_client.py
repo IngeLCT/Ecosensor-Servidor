@@ -86,8 +86,10 @@ def request_json_sync(request: Request, url: str, timeout: float = 8.0) -> dict[
             return {'ok': 200 <= response.status < 300, 'status': response.status, 'url': url, 'data': data}
     except HTTPError as exc:
         raw = exc.read().decode('utf-8', errors='replace') if exc.fp else ''
+        print(f'[http_json] HTTPError url={url} status={exc.code} body={raw!r}', flush=True)
         return {'ok': False, 'status': exc.code, 'url': url, 'data': raw}
     except (TimeoutError, URLError, OSError) as exc:
+        print(f'[http_json] exception url={url} timeout={timeout} type={type(exc).__name__} error={exc!r}', flush=True)
         return {'ok': False, 'status': 0, 'url': url, 'data': str(exc)}
 
 

@@ -49,16 +49,43 @@ def web_assets_payload_for_device(device_id: str, esp_host: str) -> dict[str, An
 
 
 async def start_device_web_assets_update(device_id: str) -> dict[str, Any]:
+    print(f'[web_assets] solicitud recibida device_id={device_id}', flush=True)
     active = await ensure_device_active(device_id)
     if not active:
+        print(f'[web_assets] dispositivo no activo device_id={device_id}', flush=True)
         return {'ok': False, 'error': 'dispositivo no activo'}
     device_id = str(active['device_id'])
     host = str(active['host'])
+    status = active.get('status') if isinstance(active.get('status'), dict) else {}
+    print(
+        f'[web_assets] activo device_id={device_id} host={host} '
+        f'wifi={status.get("wifi")} sd_ready={status.get("sd_ready")} '
+        f'firmware={status.get("firmware_version")}',
+        flush=True,
+    )
     try:
         payload = web_assets_payload_for_device(device_id, host)
     except OtaError as exc:
+        print(f'[web_assets] error preparando payload device_id={device_id}: {exc}', flush=True)
         return {'ok': False, 'error': str(exc)}
-    result = await start_web_assets_update(host, payload, timeout=15.0)
+
+    print(f'[web_assets] base_url={payload.get("base_url")}', flush=True)
+    for file_info in payload.get('files', []):
+        print(
+            '[web_assets] archivo '
+            f'name={file_info.get("name")} size={file_info.get("size_bytes")} '
+            f'sha256={file_info.get("sha256")} url={file_info.get("url")}',
+            flush=True,
+        )
+
+    timeout_s = 90.0
+    print(f'[web_assets] enviando POST /web/update host={host} timeout={timeout_s}s', flush=True)
+    result = await start_web_assets_update(host, payload, timeout=timeout_s)
+    print(
+        f'[web_assets] respuesta host={host} ok={result.get("ok")} '
+        f'status={result.get("status")} url={result.get("url")} data={result.get("data")!r}',
+        flush=True,
+    )
     return {
         'ok': bool(result.get('ok')),
         'device_id': device_id,
