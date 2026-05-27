@@ -14,7 +14,7 @@ from services.esp_client import fetch_ota_status, start_ota_update, start_web_as
 class OtaError(ValueError):
     pass
 
-WEB_ASSET_FILENAMES = {'index.html', 'script.js', 'style.css', 'Recurso2.png'}
+WEB_ASSET_FILENAMES = {'in.html', 'sc.js', 'st.css', 'lct.png'}
 
 
 def web_asset_dir(device_id: str) -> Path:
@@ -37,7 +37,7 @@ def web_assets_payload_for_device(device_id: str, esp_host: str) -> dict[str, An
     server_ip = _local_ip_for_target(esp_host)
     base_url = f'http://{server_ip}:{UI_PORT}/firmware/{quote(device_id)}/web'
     files = []
-    for name in ('index.html', 'style.css', 'script.js', 'Recurso2.png'):
+    for name in ('in.html', 'st.css', 'sc.js', 'lct.png'):
         path = web_asset_file_path(device_id, name)
         files.append({
             'name': name,
