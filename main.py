@@ -170,6 +170,7 @@ def firmware_web_asset(device_id: str, filename: str):
         return JSONResponse({'ok': False, 'error': str(exc)}, status_code=404)
     media_types = {
         '.html': 'text/html; charset=utf-8',
+        '.htm': 'text/html; charset=utf-8',
         '.css': 'text/css; charset=utf-8',
         '.js': 'application/javascript; charset=utf-8',
         '.png': 'image/png',
