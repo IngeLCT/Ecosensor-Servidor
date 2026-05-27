@@ -8,11 +8,66 @@ from urllib.parse import quote
 
 from config import FIRMWARE_DIR, UI_PORT
 from services.device_registry import active_devices, ensure_active_devices, ensure_device_active
-from services.esp_client import fetch_ota_status, start_ota_update
+from services.esp_client import fetch_ota_status, start_ota_update, start_web_assets_update
 
 
 class OtaError(ValueError):
     pass
+
+WEB_ASSET_FILENAMES = {'index.html', 'script.js', 'style.css', 'Recurso2.png'}
+
+
+def web_asset_dir(device_id: str) -> Path:
+    return _device_dir(device_id) / 'web'
+
+
+def web_asset_file_path(device_id: str, filename: str) -> Path:
+    device_id = _clean_device_id(device_id)
+    clean_filename = (filename or '').strip()
+    if clean_filename not in WEB_ASSET_FILENAMES:
+        raise OtaError('archivo web inválido')
+    path = web_asset_dir(device_id) / clean_filename
+    if not path.exists() or not path.is_file():
+        raise OtaError('archivo web no encontrado')
+    return path
+
+
+def web_assets_payload_for_device(device_id: str, esp_host: str) -> dict[str, Any]:
+    device_id = _clean_device_id(device_id)
+    server_ip = _local_ip_for_target(esp_host)
+    base_url = f'http://{server_ip}:{UI_PORT}/firmware/{quote(device_id)}/web'
+    files = []
+    for name in ('index.html', 'style.css', 'script.js', 'Recurso2.png'):
+        path = web_asset_file_path(device_id, name)
+        files.append({
+            'name': name,
+            'url': f'{base_url}/{quote(name)}',
+            'size_bytes': path.stat().st_size,
+            'sha256': _sha256_file(path).upper(),
+        })
+    return {'device_id': device_id, 'base_url': base_url, 'files': files}
+
+
+async def start_device_web_assets_update(device_id: str) -> dict[str, Any]:
+    active = await ensure_device_active(device_id)
+    if not active:
+        return {'ok': False, 'error': 'dispositivo no activo'}
+    device_id = str(active['device_id'])
+    host = str(active['host'])
+    try:
+        payload = web_assets_payload_for_device(device_id, host)
+    except OtaError as exc:
+        return {'ok': False, 'error': str(exc)}
+    result = await start_web_assets_update(host, payload, timeout=15.0)
+    return {
+        'ok': bool(result.get('ok')),
+        'device_id': device_id,
+        'host': host,
+        'payload': payload,
+        'response': result.get('data'),
+        'status': result.get('status'),
+        'error': None if result.get('ok') else result.get('data'),
+    }
 
 
 def _clean_device_id(device_id: str) -> str:

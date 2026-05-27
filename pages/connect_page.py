@@ -5,7 +5,7 @@ from nicegui import app, ui
 
 from services.device_registry import active_device_options, ensure_active_devices, ensure_device_active, forget_device, host_for_device, probe_host, registry_revision, remember_host
 from services.esp_client import build_endpoints, delete_json, sync_time_if_needed
-from services.ota_manager import ota_snapshot, start_device_ota
+from services.ota_manager import ota_snapshot, start_device_ota, start_device_web_assets_update
 from shared.formatters import device_display_name
 from shared.styles import add_styles
 from storage.measurements_store import clear_measurements
@@ -263,12 +263,26 @@ def config_page(request: Request) -> None:
                         ui.notify(f'No se pudo iniciar OTA para {did}: {result.get("error")}', color='negative')
                     await refresh_ota_status(rebuild=False, only_device_id=did)
 
+                async def update_web_assets(did: str = device_id) -> None:
+                    result = await start_device_web_assets_update(did)
+                    if result.get('ok'):
+                        response = result.get('response') if isinstance(result.get('response'), dict) else {}
+                        saved = response.get('saved') if isinstance(response, dict) else None
+                        total = response.get('total') if isinstance(response, dict) else None
+                        detail = f' ({saved}/{total})' if saved is not None and total is not None else ''
+                        ui.notify(f'Archivos web enviados a {did}{detail}.', color='positive')
+                    else:
+                        ui.notify(f'No se pudieron enviar archivos web a {did}: {result.get("error")}', color='negative')
+                    await refresh_ota_status(rebuild=False, only_device_id=did)
+
                 with ui.card().classes('w-full'):
                     title_label = ui.label('').classes('connect-label')
                     version_label = ui.label('').classes('connect-label')
                     state_label = ui.label('').classes('connect-label')
                     note_label = ui.label('').classes('connect-label')
-                    update_button = ui.button('Actualizar', on_click=update_device).props('unelevated no-caps')
+                    with ui.row().classes('gap-2 items-center'):
+                        update_button = ui.button('Actualizar', on_click=update_device).props('unelevated no-caps')
+                        ui.button('Actualizar web', on_click=update_web_assets).props('unelevated no-caps').classes('secondary-button')
                     ota_cards[device_id] = {
                         'title': title_label,
                         'version': version_label,

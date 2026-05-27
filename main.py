@@ -22,7 +22,7 @@ from nicegui import app, ui
 from config import STATIC_DIR, UI_HOST, UI_PORT
 from services.device_registry import active_devices, mark_device_seen, probe_failures, remember_host
 from services.measurement_sync import background_sync_loop
-from services.ota_manager import OtaError, firmware_file_path, load_manifest, ota_snapshot, start_device_ota
+from services.ota_manager import OtaError, firmware_file_path, load_manifest, ota_snapshot, start_device_ota, start_device_web_assets_update, web_asset_file_path
 from services.sync_debug import record_sync_event
 from services.mdns_service import start_mdns_service
 from shared.formatters import row_from_payload
@@ -139,6 +139,12 @@ async def api_ota_update(device_id: str = Query(...), force: bool = Query(defaul
     return JSONResponse(result, status_code=200 if result.get('ok') else 400)
 
 
+@app.post('/api/ota/web-assets/update')
+async def api_web_assets_update(device_id: str = Query(...)) -> JSONResponse:
+    result = await start_device_web_assets_update(device_id)
+    return JSONResponse(result, status_code=200 if result.get('ok') else 400)
+
+
 @app.get('/firmware/{device_id}/manifest.json')
 def firmware_manifest(device_id: str) -> JSONResponse:
     try:
@@ -154,6 +160,21 @@ def firmware_binary(device_id: str, filename: str):
     except OtaError as exc:
         return JSONResponse({'ok': False, 'error': str(exc)}, status_code=404)
     return FileResponse(path, media_type='application/octet-stream', filename=filename)
+
+
+@app.get('/firmware/{device_id}/web/{filename}', response_model=None)
+def firmware_web_asset(device_id: str, filename: str):
+    try:
+        path = web_asset_file_path(device_id, filename)
+    except OtaError as exc:
+        return JSONResponse({'ok': False, 'error': str(exc)}, status_code=404)
+    media_types = {
+        '.html': 'text/html; charset=utf-8',
+        '.css': 'text/css; charset=utf-8',
+        '.js': 'application/javascript; charset=utf-8',
+        '.png': 'image/png',
+    }
+    return FileResponse(path, media_type=media_types.get(path.suffix.lower(), 'application/octet-stream'), filename=filename)
 
 
 @app.get('/api/measurements.csv')

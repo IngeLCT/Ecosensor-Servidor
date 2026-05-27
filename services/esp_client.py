@@ -48,6 +48,7 @@ def build_endpoints(host: str) -> dict[str, str]:
         'diagnostics': f'{base_url}/diagnostics' if base_url else '',
         'ota_update': f'{base_url}/ota/update' if base_url else '',
         'ota_status': f'{base_url}/ota/status' if base_url else '',
+        'web_update': f'{base_url}/web/update' if base_url else '',
         'wifi_clear': f'{base_url}/wifi/clear' if base_url else '',
         'readings_clear': f'{base_url}/lecturas/clear' if base_url else '',
     }
@@ -107,6 +108,13 @@ async def start_ota_update(host: str, payload: dict[str, Any], timeout: float = 
     if not endpoints['ota_update']:
         return {'ok': False, 'status': 0, 'url': '', 'data': 'missing host'}
     return await post_json(endpoints['ota_update'], payload, timeout=timeout)
+
+
+async def start_web_assets_update(host: str, payload: dict[str, Any], timeout: float = 12.0) -> dict[str, Any]:
+    endpoints = build_endpoints(host)
+    if not endpoints['web_update']:
+        return {'ok': False, 'status': 0, 'url': '', 'data': 'missing host'}
+    return await post_json(endpoints['web_update'], payload, timeout=timeout)
 
 
 async def fetch_ota_status(host: str, timeout: float = 3.0) -> dict[str, Any]:
