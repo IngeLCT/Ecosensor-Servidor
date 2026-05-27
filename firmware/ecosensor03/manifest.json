@@ -1,8 +1,8 @@
 {
   "device_id": "ecosensor03",
-  "version": "1.0.35",
-  "filename": "ecosensor03_v1.0.35.bin",
+  "version": "1.0.36",
+  "filename": "ecosensor03_v1.0.36.bin",
   "enabled": true,
-  "sha256": "124C6991C7EFEFB671C859BEC8013C994518CA2FDB4416A5744B8BD84D0A6888",
+  "sha256": "88BB3006DD7F90E8C12F2A56DEEC119AABD987B0808FC647C73063A06ADEA38B",
   "release_date": "2026-05-27"
 }
