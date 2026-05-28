@@ -241,6 +241,8 @@ async def sync_sensor_measurements(device_id: str | None = None, *, fetch_latest
             host=host_now,
             ok=bool(connection.get('ok')),
             synced=bool(connection.get('synced')),
+            time_drift_s=connection.get('time_drift_s'),
+            forced_by_time_drift=connection.get('forced_by_time_drift'),
             status=summarize_response(connection.get('status')),
             sync=summarize_response(connection.get('sync')) if connection.get('sync') else None,
         )
