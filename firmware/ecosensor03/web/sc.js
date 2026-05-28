@@ -3,7 +3,12 @@
 // Sin IndexedDB, sin historial local, sin descarga CSV y sin EventSource/SSE.
 
 const API_LATEST_URL = '/api/latest';
+const STATUS_URL = '/status';
+const TIME_SYNC_URL = '/time';
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutos
+
+let timeSyncInProgress = false;
+let timeSyncedFromBrowser = false;
 
 const SENSOR_FIELDS = [
   { id: 'pm1', keys: ['pm1', 'pm1_0', 'pm1p0', 'pm1p0_ug_m3', 'pm1_0_ug_m3', 'sen55_pm1p0'], decimals: 1 },
@@ -65,6 +70,49 @@ function formatTime(date) {
   return date.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 }
 
+function pad2(value) {
+  return String(value).padStart(2, '0');
+}
+
+function browserUtcTimePayload() {
+  const now = new Date();
+  return {
+    date: `${pad2(now.getUTCDate())}-${pad2(now.getUTCMonth() + 1)}-${now.getUTCFullYear()}`,
+    time: `${pad2(now.getUTCHours())}:${pad2(now.getUTCMinutes())}:${pad2(now.getUTCSeconds())}`,
+  };
+}
+
+async function syncTimeFromBrowserIfNeeded() {
+  if (timeSyncInProgress || timeSyncedFromBrowser) return;
+
+  try {
+    const response = await fetch(STATUS_URL, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const status = await response.json();
+    const needsSync = status?.needs_time_sync === true || status?.time_valid === false;
+    if (!needsSync) return;
+
+    timeSyncInProgress = true;
+    setText('last-date', 'Sincronizando hora...');
+    setText('last-time', 'Usando hora del navegador');
+
+    const syncResponse = await fetch(TIME_SYNC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(browserUtcTimePayload()),
+    });
+    if (!syncResponse.ok) throw new Error(`HTTP ${syncResponse.status}`);
+
+    timeSyncedFromBrowser = true;
+    setText('last-date', 'Hora sincronizada');
+    setText('last-time', 'Esperando nueva medición');
+  } catch (error) {
+    console.error('Error al sincronizar hora desde navegador:', error);
+  } finally {
+    timeSyncInProgress = false;
+  }
+}
+
 function updateMeasurementTime(data) {
   const timestamp = firstDefined(data, ['ts_utc', 'timestamp', 'datetime', 'date_time', 'fecha_hora', 'fechaHora', 'time_iso', 'iso_time']);
   const parsedTimestamp = parseTimestamp(timestamp);
@@ -83,9 +131,8 @@ function updateMeasurementTime(data) {
     return;
   }
 
-  const now = new Date();
-  setText('last-date', formatDate(now));
-  setText('last-time', formatTime(now));
+  setText('last-date', data?.time_valid === false ? 'Sin hora válida' : 'Pendiente');
+  setText('last-time', data?.time_valid === false ? 'Sincronizando hora...' : 'Esperando medición');
 }
 
 function updateDeviceTitle(data) {
@@ -117,9 +164,14 @@ async function getLatestReading() {
   }
 }
 
+async function refreshData() {
+  await syncTimeFromBrowserIfNeeded();
+  await getLatestReading();
+}
+
 function startPolling() {
-  getLatestReading();
-  window.setInterval(getLatestReading, REFRESH_INTERVAL_MS);
+  refreshData();
+  window.setInterval(refreshData, REFRESH_INTERVAL_MS);
 }
 
 window.addEventListener('load', startPolling);
