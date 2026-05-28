@@ -17,18 +17,22 @@ class OtaError(ValueError):
 WEB_ASSET_FILENAMES = {'in.htm', 'sc.js', 'st.css', 'lct.png'}
 
 
-def web_asset_dir(device_id: str) -> Path:
-    return _device_dir(device_id) / 'web'
+def web_asset_dir(device_id: str | None = None) -> Path:
+    # Los assets de /tabla son compartidos por todos los EcoSensor.
+    # Se conserva device_id en la firma para compatibilidad con rutas existentes.
+    if device_id:
+        _clean_device_id(device_id)
+    return FIRMWARE_DIR / 'web'
 
 
 def web_asset_file_path(device_id: str, filename: str) -> Path:
-    device_id = _clean_device_id(device_id)
+    _clean_device_id(device_id)
     clean_filename = (filename or '').strip()
     if clean_filename not in WEB_ASSET_FILENAMES:
         raise OtaError('archivo web inválido')
     path = web_asset_dir(device_id) / clean_filename
     if not path.exists() or not path.is_file():
-        raise OtaError('archivo web no encontrado')
+        raise OtaError('archivo web compartido no encontrado')
     return path
 
 
