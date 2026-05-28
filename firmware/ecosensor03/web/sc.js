@@ -113,6 +113,13 @@ async function syncTimeFromBrowserIfNeeded() {
   }
 }
 
+function formatDeviceId(value) {
+  const text = String(value || '').trim();
+  const match = text.match(/^ecosensor(.+)$/i);
+  if (match) return `EcoSensor${match[1]}`;
+  return text;
+}
+
 function updateMeasurementTime(data) {
   const timestamp = firstDefined(data, ['ts_utc', 'timestamp', 'datetime', 'date_time', 'fecha_hora', 'fechaHora', 'time_iso', 'iso_time']);
   const parsedTimestamp = parseTimestamp(timestamp);
@@ -131,14 +138,14 @@ function updateMeasurementTime(data) {
     return;
   }
 
-  setText('last-date', data?.time_valid === false ? 'Sin hora válida' : 'Pendiente');
+  setText('last-date', data?.time_valid === false ? 'Sincronizando fecha...' : 'Pendiente');
   setText('last-time', data?.time_valid === false ? 'Sincronizando hora...' : 'Esperando medición');
 }
 
 function updateDeviceTitle(data) {
   const deviceId = firstDefined(data, ['device_id', 'id', 'ID', 'mac', 'MAC']);
   const title = document.querySelector('h2');
-  if (title && deviceId) title.textContent = `EcoSensor: ${deviceId}`;
+  if (title && deviceId) title.textContent = `ID: ${formatDeviceId(deviceId)}`;
 }
 
 function updateTable(data) {
