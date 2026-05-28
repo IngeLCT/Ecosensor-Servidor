@@ -5,10 +5,11 @@
 const API_LATEST_URL = '/api/latest';
 const STATUS_URL = '/status';
 const TIME_SYNC_URL = '/time';
-const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutos
+const REFRESH_INTERVAL_MS = 15 * 1000; // 15 segundos
 
 let timeSyncInProgress = false;
 let timeSyncedFromBrowser = false;
+let lastMeasurementKey = null;
 
 const SENSOR_FIELDS = [
   { id: 'pm1', keys: ['pm1', 'pm1_0', 'pm1p0', 'pm1p0_ug_m3', 'pm1_0_ug_m3', 'sen55_pm1p0'], decimals: 1 },
@@ -148,11 +149,22 @@ function updateDeviceTitle(data) {
   if (title && deviceId) title.textContent = `ID: ${formatDeviceId(deviceId)}`;
 }
 
-function updateTable(data) {
-  for (const field of SENSOR_FIELDS) {
-    const value = firstDefined(data, field.keys);
-    setText(field.id, formatValue(value, field.decimals));
+function measurementKey(data) {
+  return firstDefined(data, ['measurement_id', 'id', 'source_id', 'timestamp', 'uptime_s']);
+}
+
+function updateTable(data, options = {}) {
+  const key = measurementKey(data);
+  const isNewMeasurement = options.force || key === undefined || key !== lastMeasurementKey;
+
+  if (isNewMeasurement) {
+    for (const field of SENSOR_FIELDS) {
+      const value = firstDefined(data, field.keys);
+      setText(field.id, formatValue(value, field.decimals));
+    }
+    lastMeasurementKey = key;
   }
+
   updateMeasurementTime(data);
   updateDeviceTitle(data);
 }
