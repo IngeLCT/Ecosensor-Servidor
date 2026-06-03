@@ -6,11 +6,34 @@ html {
 body {
     background-color: #cce5dc;
     padding: 10%;
+    margin: 0;
 }
 
-h1 {
+.brand {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.brand img {
+    width: 80px;
+    height: 80px;
+    object-fit: contain;
+}
+
+.brand-title {
     color: rgb(4, 87, 9);
-    font-size: 25px;
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.brand-title sup {
+    font-size: 11px;
+    margin-left: 1px;
+    vertical-align: super;
 }
 
 h2 {
@@ -32,4 +55,25 @@ td {
 
 th {
     background-color: #80ffd4;
+}
+
+.last-date,
+.last-time {
+    color: rgb(4, 4, 52);
+    font-size: 18px;
+}
+
+@media (max-width: 640px) {
+    body {
+        padding: 6%;
+    }
+
+    .brand-title {
+        font-size: 24px;
+    }
+
+    th,
+    td {
+        font-size: 18px;
+    }
 }
