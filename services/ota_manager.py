@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import socket
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +16,13 @@ class OtaError(ValueError):
     pass
 
 WEB_ASSET_FILENAMES = {'in.htm', 'sc.js', 'st.css', 'lct.png'}
+
+
+def _server_port() -> int:
+    try:
+        return int(os.getenv('ECOSENSOR_ACTIVE_PORT', str(UI_PORT)))
+    except ValueError:
+        return UI_PORT
 
 
 def web_asset_dir(device_id: str | None = None) -> Path:
@@ -39,7 +47,7 @@ def web_asset_file_path(device_id: str, filename: str) -> Path:
 def web_assets_payload_for_device(device_id: str, esp_host: str) -> dict[str, Any]:
     device_id = _clean_device_id(device_id)
     server_ip = _local_ip_for_target(esp_host)
-    base_url = f'http://{server_ip}:{UI_PORT}/firmware/{quote(device_id)}/web'
+    base_url = f'http://{server_ip}:{_server_port()}/firmware/{quote(device_id)}/web'
     files = []
     for name in ('in.htm', 'st.css', 'sc.js', 'lct.png'):
         path = web_asset_file_path(device_id, name)
@@ -187,7 +195,7 @@ def firmware_url_for_device(device_id: str, esp_host: str) -> str:
     manifest = load_manifest(device_id)
     server_ip = _local_ip_for_target(esp_host)
     return (
-        f'http://{server_ip}:{UI_PORT}/firmware/'
+        f'http://{server_ip}:{_server_port()}/firmware/'
         f'{quote(manifest["device_id"])}/{quote(manifest["filename"])}'
     )
 

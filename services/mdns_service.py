@@ -3,9 +3,9 @@ import ipaddress
 import socket
 from typing import Optional
 
-from zeroconf import ServiceInfo, Zeroconf
+from zeroconf import NonUniqueNameException, ServiceInfo, Zeroconf
 
-from config import MDNS_HOSTNAME, MDNS_SERVICE_TYPE, UI_PORT
+from config import DISABLE_MDNS, MDNS_HOSTNAME, MDNS_SERVICE_TYPE, UI_PORT
 
 _zeroconf: Optional[Zeroconf] = None
 _service_info: Optional[ServiceInfo] = None
@@ -63,9 +63,14 @@ def _get_lan_ips() -> list[str]:
     return addresses
 
 
-def start_mdns_service() -> None:
+def start_mdns_service(port: int | None = None) -> None:
     """Advertise the NiceGUI HTTP server as ecosensor-servidor.local."""
     global _zeroconf, _service_info
+    service_port = int(port or UI_PORT)
+    if DISABLE_MDNS:
+        if PRINT_MDNS_STATUS:
+            print('Servidor mDNS deshabilitado por ECOSENSOR_DISABLE_MDNS.', flush=True)
+        return
 
     if _zeroconf is not None:
         return
@@ -78,18 +83,34 @@ def start_mdns_service() -> None:
         MDNS_SERVICE_TYPE,
         service_name,
         addresses=[socket.inet_aton(ip) for ip in ips],
-        port=UI_PORT,
+        port=service_port,
         properties={
             'path': '/',
             'name': 'EcoSensor Servidor',
         },
         server=server_name,
     )
-    _zeroconf = Zeroconf()
-    _zeroconf.register_service(_service_info)
+    _zeroconf = Zeroconf(interfaces=ips)
+    try:
+        _zeroconf.register_service(_service_info)
+    except NonUniqueNameException:
+        _zeroconf.close()
+        _zeroconf = None
+        _service_info = None
+        if PRINT_MDNS_STATUS:
+            print(
+                f"Servidor mDNS no anunciado: el nombre {MDNS_HOSTNAME}.local ya esta en uso.",
+                flush=True,
+            )
+        return
     if PRINT_MDNS_STATUS:
         ip_list = ', '.join(ips)
-        print(f'Servidor mDNS: http://{MDNS_HOSTNAME}.local:{UI_PORT}/ ({ip_list})', flush=True)
+        if service_port == 80:
+            url = f'http://{MDNS_HOSTNAME}.local/'
+        else:
+            url = f'http://{MDNS_HOSTNAME}.local:{service_port}/'
+
+        print(f'Servidor mDNS: {url} ({ip_list})', flush=True)
 
 
 def stop_mdns_service() -> None:

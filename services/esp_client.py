@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from config import UI_PORT
+from shared.time_utils import server_local_now, server_local_now_naive
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
@@ -45,6 +46,7 @@ def build_endpoints(host: str) -> dict[str, str]:
         'lecturas': f'{base_url}/lecturas' if base_url else '',
         'lecturas_since': f'{base_url}/lecturas/since' if base_url else '',
         'lecturas_range': f'{base_url}/lecturas/range' if base_url else '',
+        'lecturas_export': f'{base_url}/lecturas/export' if base_url else '',
         'lecturas_recent': f'{base_url}/lecturas/recent' if base_url else '',
         'config': f'{base_url}/config' if base_url else '',
         'time': f'{base_url}/time' if base_url else '',
@@ -89,10 +91,8 @@ def request_json_sync(request: Request, url: str, timeout: float = 8.0) -> dict[
             return {'ok': 200 <= response.status < 300, 'status': response.status, 'url': url, 'data': data}
     except HTTPError as exc:
         raw = exc.read().decode('utf-8', errors='replace') if exc.fp else ''
-        print(f'[http_json] HTTPError url={url} status={exc.code} body={raw!r}', flush=True)
         return {'ok': False, 'status': exc.code, 'url': url, 'data': raw}
     except (TimeoutError, URLError, OSError) as exc:
-        print(f'[http_json] exception url={url} timeout={timeout} type={type(exc).__name__} error={exc!r}', flush=True)
         return {'ok': False, 'status': 0, 'url': url, 'data': str(exc)}
 
 
@@ -127,6 +127,8 @@ async def fetch_ota_status(host: str, timeout: float = 3.0) -> dict[str, Any]:
     if not endpoints['ota_status']:
         return {'ok': False, 'status': 0, 'url': '', 'data': 'missing host'}
     return await fetch_json(endpoints['ota_status'], timeout=timeout)
+
+
 
 
 def candidate_hosts(saved_host: str, default_host: str) -> list[str]:
@@ -278,7 +280,7 @@ def _time_drift_seconds(status_data: dict[str, Any]) -> int | None:
         status_data.get('last_measurement_timestamp'),
     )
     drifts: list[int] = []
-    now = datetime.now()
+    now = server_local_now_naive()
     for value in candidates:
         device_dt = _parse_device_datetime(value)
         if device_dt is not None:
@@ -380,6 +382,53 @@ async def fetch_readings_range(host: str, from_id: int, to_id: int, limit: int =
     return await fetch_json(f"{endpoints['lecturas_range']}?{query}", timeout=timeout)
 
 
+def fetch_readings_export_sync(host: str, from_id: int, to_id: int, timeout: float = 120.0) -> dict[str, Any]:
+    endpoints = build_endpoints(host)
+    if not endpoints['lecturas_export']:
+        return {'ok': False, 'status': 0, 'url': '', 'data': 'missing host'}
+    query = urlencode({
+        'from': max(1, int(from_id)),
+        'to': max(1, int(to_id)),
+        'timeout_ms': max(30000, int(timeout * 1000)),
+    })
+    url = f"{endpoints['lecturas_export']}?{query}"
+    request = Request(url, headers={'Accept': 'application/x-ndjson'})
+    rows: list[dict[str, Any]] = []
+    errors: list[Any] = []
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            for raw_line in response:
+                line = raw_line.decode('utf-8', errors='replace').strip()
+                if not line:
+                    continue
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    errors.append(line[:160])
+                    continue
+                if isinstance(item, dict) and 'error' in item:
+                    errors.append(item)
+                    continue
+                if isinstance(item, dict):
+                    rows.append(item)
+            ok = 200 <= response.status < 300 and not errors
+            return {
+                'ok': ok,
+                'status': response.status,
+                'url': url,
+                'data': {'rows': rows, 'count': len(rows), 'errors': errors},
+            }
+    except HTTPError as exc:
+        raw = exc.read().decode('utf-8', errors='replace') if exc.fp else ''
+        return {'ok': False, 'status': exc.code, 'url': url, 'data': raw}
+    except (TimeoutError, URLError, OSError) as exc:
+        return {'ok': False, 'status': 0, 'url': url, 'data': str(exc)}
+
+
+async def fetch_readings_export(host: str, from_id: int, to_id: int, timeout: float = 120.0) -> dict[str, Any]:
+    return await asyncio.to_thread(fetch_readings_export_sync, host, from_id, to_id, timeout)
+
+
 async def fetch_recent_readings(host: str, after_id: int, before_id: int = 0, limit: int = 25, timeout: float = 4.0) -> dict[str, Any]:
     endpoints = build_endpoints(host)
     if not endpoints['lecturas_recent']:
@@ -404,7 +453,7 @@ async def autoconnect_and_sync(saved_host: str, default_host: str) -> dict[str, 
 
 
 def system_datetime_payload(target_host: str | None = None) -> dict[str, str]:
-    now = datetime.now().astimezone()
+    now = server_local_now()
     payload = {
         'date': now.strftime('%d-%m-%Y'),
         'time': now.strftime('%H:%M:%S'),

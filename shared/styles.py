@@ -39,11 +39,28 @@ def add_styles() -> None:
             font-weight: 700;
             line-height: 1.1;
         }
+        .brand-header {
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            gap: 14px;
+            flex-wrap: nowrap;
+            margin-bottom: 12px;
+        }
+        .brand-name {
+            color: #4a4d2f;
+            font-size: 42px;
+            font-weight: 700;
+            line-height: 1;
+            letter-spacing: normal;
+            text-shadow: none;
+            white-space: nowrap;
+        }
         .connect-logo {
-            width: 90px !important;
-            height: 90px !important;
-            max-width: 90px;
-            max-height: 90px;
+            width: 110px !important;
+            height: 110px !important;
+            max-width: 110px;
+            max-height: 110px;
             overflow: visible;
         }
         
@@ -105,20 +122,6 @@ def add_styles() -> None:
             background: #8f001a !important;
             background-color: #8f001a !important;
         }
-        .ota-toggle-button { background: #0f766e !important; color: #fff !important; width: 100%; }
-        .ota-panel {
-            background: rgba(255, 255, 255, .34);
-            border: 1px solid rgba(15, 118, 110, .28);
-            border-radius: 10px;
-            padding: 12px;
-        }
-        .ota-auto-info {
-            color: #0f5132 !important;
-            background: rgba(209, 250, 229, .7);
-            border: 1px solid rgba(15, 118, 110, .28);
-            border-radius: 8px;
-            padding: 8px 10px;
-        }
         .dashboard-link {
             color: #132f4c !important;
             font-weight: 900 !important;
@@ -147,6 +150,9 @@ def add_styles() -> None:
             font-size: 26px;
             font-weight: 700;
             text-decoration: underline;
+        }
+        .dashboard-main-title {
+            margin-bottom: 12px;
         }
         .device-select .q-field__control {
             min-height: 48px;
@@ -214,7 +220,9 @@ def add_styles() -> None:
         }
         @media (max-width: 760px) {
             .connect-title { font-size: 30px; }
-            .connect-logo { width: 104px; height: 104px; }
+            .brand-header { gap: 10px; }
+            .brand-name { font-size: 34px; }
+            .connect-logo { width: 88px !important; height: 88px !important; }
             .connect-subtitle { font-size: 23px; }
             .thumbs { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
             .measure-table th,

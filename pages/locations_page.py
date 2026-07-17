@@ -1,0 +1,565 @@
+import asyncio
+import csv
+import html
+import io
+import math
+from dataclasses import dataclass, field
+from typing import Any
+from urllib.parse import urlencode
+
+from fastapi import Query, Request
+from fastapi.responses import Response
+from nicegui import Client, app, events, ui
+
+from config import NOMINATIM_MAX_LOOKUPS_PER_PAGE_LOAD
+from services.device_registry import active_device_options, ensure_active_devices, registry_revision
+from services.reverse_geocoding import coordinate_key, fallback_label, resolve_unique_locations
+from services.main_window import HEAVY_PAGE_SHUTDOWN_DELAY_SECONDS, register_main_window
+from shared.formatters import device_display_name, format_value
+from shared.styles import add_styles
+from storage.measurements_store import graph_rows_all
+
+CLUSTER_RADIUS_KM = 1.0
+@dataclass
+class LocationCluster:
+    index: int
+    lat_sum: float = 0.0
+    lon_sum: float = 0.0
+    count: int = 0
+    rows: list[dict[str, Any]] = field(default_factory=list)
+    location_label: str = ''
+    location_formatted: str = ''
+    location_city: str = ''
+    location_suburb: str = ''
+    location_state: str = ''
+    geocoding_source: str = ''
+    location_cached_locally: bool = False
+
+    @property
+    def lat(self) -> float:
+        return self.lat_sum / self.count if self.count else 0.0
+
+    @property
+    def lon(self) -> float:
+        return self.lon_sum / self.count if self.count else 0.0
+
+    @property
+    def first_label(self) -> str:
+        if not self.rows:
+            return ''
+        row = self.rows[0]
+        return f"{_format_date_display(row.get('fecha'))} {row.get('hora') or ''}".strip()
+
+    @property
+    def last_label(self) -> str:
+        if not self.rows:
+            return ''
+        row = self.rows[-1]
+        return f"{_format_date_display(row.get('fecha'))} {row.get('hora') or ''}".strip()
+
+    def add(self, row: dict[str, Any], lat: float, lon: float) -> None:
+        self.lat_sum += lat
+        self.lon_sum += lon
+        self.count += 1
+        self.rows.append(row)
+
+    @property
+    def display_location(self) -> str:
+        return self.location_label or fallback_label(self.lat, self.lon)
+
+    @property
+    def radius_km(self) -> float:
+        if self.count <= 1:
+            return 0.0
+        return max(_haversine_km(self.lat, self.lon, float(row['_lat']), float(row['_lon'])) for row in self.rows)
+
+
+def _nav() -> None:
+    with ui.element('nav').classes('top-nav'):
+        ui.link('Inicio', '/dashboard')
+        ui.label('|')
+        ui.link('Gráficas Partículas', '/graficas/particulas')
+        ui.label('|')
+        ui.link('Gráficas VOC & NOx', '/graficas/voc-nox')
+        ui.label('|')
+        ui.link('Gráficas CO2, Temperatura & Humedad', '/graficas/ambientales')
+        ui.label('|')
+        ui.link('Ubicaciones', '/ubicaciones')
+        ui.label('|')
+        ui.link('Gráficas del Historial', '/graficas/historial')
+
+
+def _add_location_styles() -> None:
+    ui.add_head_html(
+        '''
+        <style>
+        .locations-card {
+            width: 100%;
+            max-width: 1200px;
+            margin: 24px auto;
+            background: #cce5dc;
+            border-radius: 10px;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .locations-map {
+            width: 100%;
+            height: 620px;
+        }
+        .locations-map .js-plotly-plot,
+        .locations-map .plot-container,
+        .locations-map .svg-container {
+            height: 620px !important;
+        }
+        .data-table-container {
+            width: 100%;
+            max-height: 760px;
+            overflow: auto;
+            margin-top: 24px;
+        }
+        .data-table-container table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+        }
+        .data-table-container thead th {
+            position: sticky;
+            top: 0;
+            z-index: 2;
+        }
+        .data-table-container th,
+        .data-table-container td {
+            font-size: 20px;
+            text-align: center;
+            border: 1px solid black;
+            border-radius: 10px;
+            padding: 8px;
+            color: #000;
+            white-space: nowrap;
+        }
+        .data-table-container th { background-color: #80ffd4; }
+        .locations-summary {
+            color: #000;
+            font-size: 17px;
+            font-weight: 600;
+            text-align: center;
+            margin: 8px 0 4px 0;
+        }
+        .locations-attribution {
+            color: #20352f;
+            font-size: 14px;
+            text-align: center;
+            margin-top: 8px;
+        }
+        </style>
+        '''
+    )
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    radius_km = 6371.0088
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    d_phi = math.radians(lat2 - lat1)
+    d_lambda = math.radians(lon2 - lon1)
+    a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+    return radius_km * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _valid_location_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    valid: list[dict[str, Any]] = []
+    for row in rows:
+        if not row.get('gps_valid'):
+            continue
+        try:
+            lat = float(row.get('gps_lat'))
+            lon = float(row.get('gps_lon'))
+        except (TypeError, ValueError):
+            continue
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            continue
+        item = dict(row)
+        item['_lat'] = lat
+        item['_lon'] = lon
+        valid.append(item)
+    return valid
+
+
+def _cluster_rows(rows: list[dict[str, Any]]) -> list[LocationCluster]:
+    clusters: list[LocationCluster] = []
+    for row in rows:
+        lat = float(row['_lat'])
+        lon = float(row['_lon'])
+        match: LocationCluster | None = None
+        for cluster in clusters:
+            if _haversine_km(lat, lon, cluster.lat, cluster.lon) <= CLUSTER_RADIUS_KM:
+                match = cluster
+                break
+        if match is None:
+            match = LocationCluster(index=len(clusters))
+            clusters.append(match)
+        match.add(row, lat, lon)
+    return clusters
+
+
+def _apply_location_labels(clusters: list[LocationCluster]) -> list[LocationCluster]:
+    points = [(cluster.lat, cluster.lon) for cluster in clusters]
+    resolved = resolve_unique_locations(points, max_remote_lookups=NOMINATIM_MAX_LOOKUPS_PER_PAGE_LOAD)
+    for cluster in clusters:
+        key = coordinate_key(cluster.lat, cluster.lon)
+        location = resolved.get(key) or {}
+        cluster.location_label = str(location.get('label') or '').strip() or fallback_label(cluster.lat, cluster.lon)
+        cluster.location_formatted = str(location.get('formatted') or '').strip()
+        cluster.location_city = str(location.get('city') or '').strip()
+        cluster.location_suburb = str(location.get('suburb') or location.get('neighbourhood') or location.get('district') or '').strip()
+        cluster.location_state = str(location.get('state') or '').strip()
+        cluster.geocoding_source = str(location.get('source') or '').strip() or 'fallback'
+        cluster.location_cached_locally = bool(location.get('cached_locally'))
+    return clusters
+
+
+def _extract_cluster_index(event: events.GenericEventArguments) -> int | None:
+    args = event.args
+    try:
+        if isinstance(args, dict):
+            points = args.get('points') or []
+            if points:
+                custom = points[0].get('customdata')
+                if isinstance(custom, list):
+                    custom = custom[0]
+                return int(custom)
+        if isinstance(args, list) and args:
+            custom = args[0].get('customdata')
+            if isinstance(custom, list):
+                custom = custom[0]
+            return int(custom)
+    except (TypeError, ValueError, AttributeError, IndexError):
+        return None
+    return None
+
+
+def _make_map_figure(clusters: list[LocationCluster], selected_index: int | None = None) -> dict[str, Any]:
+    import plotly.graph_objects as go
+
+    if not clusters:
+        fig = go.Figure()
+        fig.update_layout(
+            margin=dict(l=0, r=0, t=0, b=0),
+            height=620,
+        )
+        return fig
+
+    center_lat = sum(cluster.lat * cluster.count for cluster in clusters) / sum(cluster.count for cluster in clusters)
+    center_lon = sum(cluster.lon * cluster.count for cluster in clusters) / sum(cluster.count for cluster in clusters)
+    max_count = max(cluster.count for cluster in clusters)
+    sizes = [max(14, min(46, 14 + 32 * (cluster.count / max_count))) for cluster in clusters]
+    colors = ['#d62728' if cluster.index == selected_index else '#1f77b4' for cluster in clusters]
+
+    fig = go.Figure(
+        go.Scattermap(
+            lat=[cluster.lat for cluster in clusters],
+            lon=[cluster.lon for cluster in clusters],
+            mode='markers',
+            customdata=[cluster.index for cluster in clusters],
+            hovertext=[
+                f'{html.escape(cluster.display_location)}<br>'
+                f'Registros agrupados: {cluster.count}<br>'
+                f'Coordenada: {cluster.lat:.4f}, {cluster.lon:.4f}<br>'
+                f'Primera: {cluster.first_label}<br>'
+                f'Última: {cluster.last_label}'
+                for cluster in clusters
+            ],
+            marker=dict(
+                size=sizes,
+                color=colors,
+                opacity=0.82,
+                symbol='circle',
+                allowoverlap=True,
+            ),
+            hovertemplate='%{hovertext}<extra></extra>',
+        )
+    )
+    fig.update_layout(
+        height=620,
+        margin=dict(l=0, r=0, t=0, b=0),
+        map=dict(style='open-street-map', center=dict(lat=center_lat, lon=center_lon), zoom=10),
+        clickmode='event+select',
+        showlegend=False,
+    )
+    return fig
+
+
+def _fmt(value: Any, decimals: int = 2) -> str:
+    return html.escape(format_value(value, decimals))
+
+
+def _format_date_display(value: Any) -> str:
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    parts = text.split('-', 2)
+    if len(parts) == 3 and len(parts[0]) == 4:
+        return f'{parts[2]}-{parts[1]}-{parts[0]}'
+    return text
+
+
+def _render_measurements_table(cluster: LocationCluster | None) -> str:
+    if cluster is None:
+        return '<div class="locations-summary">Selecciona un punto en el mapa para ver sus mediciones.</div>'
+
+    rows_html = []
+    for row in cluster.rows:
+        rows_html.append(
+            '<tr>'
+            f'<td>{html.escape(_format_date_display(row.get("fecha")))}</td>'
+            f'<td>{html.escape(str(row.get("hora") or ""))}</td>'
+            f'<td>{_fmt(row.get("pm1p0"))}</td>'
+            f'<td>{_fmt(row.get("pm2p5"))}</td>'
+            f'<td>{_fmt(row.get("pm4p0"))}</td>'
+            f'<td>{_fmt(row.get("pm10p0"))}</td>'
+            f'<td>{_fmt(row.get("voc"))}</td>'
+            f'<td>{_fmt(row.get("nox"))}</td>'
+            f'<td>{_fmt(row.get("co2"), 0)}</td>'
+            f'<td>{_fmt(row.get("temp"))}</td>'
+            f'<td>{_fmt(row.get("hum"), 0)}</td>'
+            '</tr>'
+        )
+
+    summary = (
+        f'<div class="locations-summary">Punto {cluster.index + 1}: '
+        f'{html.escape(cluster.display_location)} | '
+        f'{cluster.count} mediciones | '
+        f'Primera: {html.escape(cluster.first_label)} | '
+        f'Última: {html.escape(cluster.last_label)}</div>'
+    )
+    return (
+        summary
+        + '<div class="data-table-container"><table id="uploadTable">'
+        + '<thead><tr>'
+        + '<th>Fecha</th><th>Hora</th><th>PM1.0(µg/m³)</th><th>PM2.5(µg/m³)</th><th>PM4.0(µg/m³)</th><th>PM10.0(µg/m³)</th>'
+        + '<th>VOC(index)</th><th>NOx(index)</th><th>CO2(ppm)</th><th>Temperatura(°C)</th><th>Humedad(%)</th>'
+        + '</tr></thead><tbody>'
+        + ''.join(rows_html)
+        + '</tbody></table></div>'
+    )
+
+
+def _safe_filename_part(value: str) -> str:
+    safe = ''.join(ch if ch.isalnum() or ch in {'_', '-'} else '_' for ch in value)
+    return safe.strip('_') or 'EcoSensor'
+
+
+def _location_cluster_filename(device_id: str, cluster: LocationCluster) -> str:
+    display_id = _safe_filename_part(device_display_name(device_id))
+    location_label = cluster.location_label if cluster.geocoding_source != 'fallback' else ''
+    location = _safe_filename_part(location_label or 'Ubicacion_no_disponible')
+    point_number = cluster.index + 1
+    return f'{display_id}_Punto_{point_number}_Med_Ubi({location}).csv'
+
+
+def _location_cluster_csv_text(cluster: LocationCluster) -> str:
+    output = io.StringIO()
+    fieldnames = [
+        'Fecha',
+        'Hora',
+        'Ubicación',
+        'Latitud',
+        'Longitud',
+        'PM1.0(µg/m³)',
+        'PM2.5(µg/m³)',
+        'PM4.0(µg/m³)',
+        'PM10.0(µg/m³)',
+        'VOC(index)',
+        'NOx(index)',
+        'CO2(ppm)',
+        'Temperatura(°C)',
+        'Humedad(%)',
+    ]
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    for row in cluster.rows:
+        writer.writerow({
+            'Fecha': _format_date_display(row.get('fecha')),
+            'Hora': str(row.get('hora') or ''),
+            'Ubicación': cluster.display_location,
+            'Latitud': f"{float(row.get('_lat')):.6f}",
+            'Longitud': f"{float(row.get('_lon')):.6f}",
+            'PM1.0(µg/m³)': format_value(row.get('pm1p0')),
+            'PM2.5(µg/m³)': format_value(row.get('pm2p5')),
+            'PM4.0(µg/m³)': format_value(row.get('pm4p0')),
+            'PM10.0(µg/m³)': format_value(row.get('pm10p0')),
+            'VOC(index)': format_value(row.get('voc')),
+            'NOx(index)': format_value(row.get('nox')),
+            'CO2(ppm)': format_value(row.get('co2'), 0),
+            'Temperatura(°C)': format_value(row.get('temp')),
+            'Humedad(%)': format_value(row.get('hum'), 0),
+        })
+    return output.getvalue()
+
+
+@app.get('/api/locations.csv')
+def download_location_cluster_csv(
+    device_id: str = Query(default=''),
+    cluster_index: int = Query(default=-1),
+) -> Response:
+    selected_device_id = str(device_id or '').strip().lower()
+    if not selected_device_id:
+        return Response('Falta device_id.\n', media_type='text/plain; charset=utf-8', status_code=400)
+
+    rows = graph_rows_all(selected_device_id)
+    clusters = _apply_location_labels(_cluster_rows(_valid_location_rows(rows)))
+    if cluster_index < 0 or cluster_index >= len(clusters):
+        return Response('No se encontro el punto seleccionado.\n', media_type='text/plain; charset=utf-8', status_code=404)
+
+    cluster = clusters[cluster_index]
+    filename = _location_cluster_filename(selected_device_id, cluster)
+    return Response(
+        content=_location_cluster_csv_text(cluster),
+        media_type='text/csv; charset=utf-8',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )
+
+
+@ui.page('/ubicaciones')
+async def locations_page(request: Request, client: Client) -> None:
+    await register_main_window(request, client, shutdown_delay_seconds=HEAVY_PAGE_SHUTDOWN_DELAY_SECONDS)
+    ui.page_title('EcoSensor Ubicaciones')
+    add_styles()
+    _add_location_styles()
+
+    selected_device_id: str | None = str(app.storage.user.get('selected_device_id') or '') or None
+    seen_registry_revision = {'value': registry_revision()}
+    clusters: list[LocationCluster] = []
+    selected_cluster_index: int | None = None
+
+    with ui.element('div').classes('dashboard'):
+        _nav()
+        with ui.element('div').classes('brand-header'):
+            ui.image('/static/LCT.png').props('fit=contain no-spinner').classes('connect-logo')
+            ui.label('EcoSensor®').classes('brand-name')
+
+        ui.label('Ubicaciones').classes('section-title dashboard-main-title')
+        id_label = ui.label('ID: -').classes('section-title')
+
+        with ui.element('div').classes('locations-card'):
+            status = ui.label('').classes('locations-summary')
+            chart = ui.plotly({}).classes('locations-map')
+            ui.label('Ubicaciones aproximadas usando datos de © OpenStreetMap contributors / Nominatim.').classes('locations-attribution')
+            points_label = ui.label('Puntos marcados: 0').classes('locations-summary')
+            table = ui.html('').classes('w-full')
+            with ui.row().classes('justify-center mt-4'):
+                export_button = ui.button('Exportar CSV').props('unelevated no-caps').classes('button1')
+                export_button.disable()
+
+    async def refresh_sensor_options() -> None:
+        nonlocal selected_device_id
+        options = active_device_options()
+        if not options:
+            asyncio.create_task(ensure_active_devices())
+        stored_device_id = str(app.storage.user.get('selected_device_id') or '') or None
+        if stored_device_id:
+            selected_device_id = stored_device_id
+        if not options:
+            selected_device_id = None
+            app.storage.user.pop('selected_device_id', None)
+            id_label.set_text('ID: -')
+            export_button.disable()
+            return
+        if selected_device_id not in options:
+            selected_device_id = next(iter(options))
+            app.storage.user['selected_device_id'] = selected_device_id
+        id_label.set_text(f'ID: {device_display_name(selected_device_id) if selected_device_id else "-"}')
+
+    async def refresh_locations() -> None:
+        nonlocal clusters, selected_cluster_index
+        if not selected_device_id:
+            clusters = []
+            selected_cluster_index = None
+            status.set_text('No hay EcoSensor seleccionado.')
+            chart.figure = _make_map_figure([])
+            chart.update()
+            points_label.set_text('Puntos marcados: 0')
+            table.set_content(_render_measurements_table(None))
+            export_button.disable()
+            return
+
+        try:
+            rows = await asyncio.to_thread(graph_rows_all, selected_device_id)
+            location_rows = _valid_location_rows(rows)
+            clusters = await asyncio.to_thread(_apply_location_labels, _cluster_rows(location_rows))
+        except ModuleNotFoundError as exc:
+            status.set_text(f'Falta instalar el paquete Python: {exc.name or "plotly"}')
+            export_button.disable()
+            return
+
+        if selected_cluster_index is not None and selected_cluster_index >= len(clusters):
+            selected_cluster_index = None
+
+        try:
+            chart.figure = _make_map_figure(clusters, selected_cluster_index)
+            chart.update()
+        except ModuleNotFoundError as exc:
+            status.set_text(f'Falta instalar el paquete Python: {exc.name or "plotly"}')
+            export_button.disable()
+            return
+        except Exception as exc:
+            status.set_text(f'No se pudo dibujar el mapa: {exc}')
+            points_label.set_text('Puntos marcados: 0')
+            table.set_content(_render_measurements_table(None))
+            export_button.disable()
+            return
+
+        points_label.set_text(f'Puntos marcados: {len(clusters)}')
+        if clusters:
+            status.set_text('')
+        else:
+            status.set_text(f'{device_display_name(selected_device_id)} no tiene mediciones con GPS válido todavía.')
+        table.set_content(_render_measurements_table(clusters[selected_cluster_index] if selected_cluster_index is not None and selected_cluster_index < len(clusters) else None))
+        if selected_cluster_index is not None and selected_cluster_index < len(clusters):
+            export_button.enable()
+        else:
+            export_button.disable()
+
+    def export_selected_cluster() -> None:
+        if not selected_device_id or selected_cluster_index is None or selected_cluster_index < 0 or selected_cluster_index >= len(clusters):
+            ui.notify('Selecciona un punto del mapa antes de exportar CSV.', type='warning')
+            return
+        params = urlencode({'device_id': selected_device_id, 'cluster_index': selected_cluster_index})
+        ui.navigate.to(f'/api/locations.csv?{params}')
+
+    async def on_map_click(event: events.GenericEventArguments) -> None:
+        nonlocal selected_cluster_index
+        index = _extract_cluster_index(event)
+        if index is None or index < 0 or index >= len(clusters):
+            return
+        selected_cluster_index = index
+        try:
+            chart.figure = _make_map_figure(clusters, selected_cluster_index)
+            chart.update()
+        except ModuleNotFoundError as exc:
+            status.set_text(f'Falta instalar el paquete Python: {exc.name or "plotly"}')
+            export_button.disable()
+            return
+        except Exception as exc:
+            status.set_text(f'No se pudo actualizar el mapa: {exc}')
+            return
+        table.set_content(_render_measurements_table(clusters[selected_cluster_index]))
+        export_button.enable()
+
+    async def refresh_if_registry_changed() -> None:
+        nonlocal selected_cluster_index
+        current = registry_revision()
+        stored_device_id = str(app.storage.user.get('selected_device_id') or '') or None
+        selected_changed = stored_device_id != selected_device_id
+        if current != seen_registry_revision['value'] or selected_changed:
+            seen_registry_revision['value'] = current
+            if selected_changed:
+                selected_cluster_index = None
+            await refresh_sensor_options()
+            await refresh_locations()
+
+    export_button.on_click(export_selected_cluster)
+    chart.on('plotly_click', on_map_click)
+    ui.timer(1.0, refresh_if_registry_changed)
+    ui.timer(0.1, lambda: asyncio.create_task(refresh_sensor_options()), once=True)
+    ui.timer(0.2, lambda: asyncio.create_task(refresh_locations()), once=True)

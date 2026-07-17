@@ -7,13 +7,16 @@ from datetime import datetime, timedelta
 from time import perf_counter
 from typing import Any
 
-from config import DEFAULT_ESP_HOST, DEVICE_ID
+from config import DEFAULT_ESP_HOST, DEVICE_ID, SHOW_PROBE_FAILURES
 from services.esp_client import build_endpoints, fetch_json_sync, normalize_host_input
 from shared.formatters import device_display_name
 from storage.settings_store import load_settings, save_settings
 
-# Un EcoSensor no debe desaparecer por un fallo puntual de mDNS/red.
-ACTIVE_TTL_SECONDS = 300
+# Un EcoSensor no debe desaparecer por un fallo puntual de mDNS/red, pero el
+# servidor tampoco debe seguir tratándolo como presente varios minutos después
+# de desconectarlo. Con el loop de 60 s, 90 s tolera un fallo puntual y limpia
+# el dispositivo en el siguiente ciclo real.
+ACTIVE_TTL_SECONDS = 90
 DISCOVERY_MAX_DEVICE_NUMBER = 12
 DISCOVERY_REFRESH_INTERVAL_SECONDS = 20
 CONFIGURED_PROBE_TIMEOUT_SECONDS = 0.7
@@ -23,6 +26,7 @@ LAN_SCAN_ENABLED = True
 LAN_SCAN_TIMEOUT_SECONDS = 0.25
 _DEVICE_RE = re.compile(r'^(ecosensor\d+)(?:\.local)?(?::\d+)?$', re.IGNORECASE)
 _REAL_DEVICE_RE = re.compile(r'^ecosensor(0[1-9]|1[0-2])$', re.IGNORECASE)
+
 
 _active_devices: dict[str, dict[str, Any]] = {}
 _probe_failures: dict[str, dict[str, Any]] = {}
@@ -127,6 +131,23 @@ def _is_real_ecosensor_id(device_id: str | None) -> bool:
     return bool(_REAL_DEVICE_RE.match(str(device_id or '').strip().lower()))
 
 
+def normalize_device_id(value: str | None, *, default: str | None = None) -> str | None:
+    """Devuelve un ID EcoSensor permitido o ``None`` si el valor no es válido.
+
+    Solo se aceptan IDs reales del rango conocido ``ecosensor01``–``ecosensor12``.
+    Esto evita que parámetros externos terminen convertidos en nombres de host
+    como ``../../etc/passwd.local`` antes de sincronizar o probar red.
+    """
+    candidate = str(value or '').strip().lower()
+    if not candidate and default is not None:
+        candidate = str(default or '').strip().lower()
+    return candidate if _is_real_ecosensor_id(candidate) else None
+
+
+def is_valid_device_id(value: str | None) -> bool:
+    return normalize_device_id(value) is not None
+
+
 def _status_device_id(status_data: dict[str, Any] | None) -> str | None:
     if not isinstance(status_data, dict):
         return None
@@ -173,7 +194,7 @@ def _settings_device_hosts(settings: dict[str, Any]) -> dict[str, str]:
 
 
 def host_for_device(device_id: str) -> str:
-    device_id = (device_id or DEVICE_ID).strip().lower()
+    device_id = normalize_device_id(device_id, default=DEVICE_ID) or DEVICE_ID
     settings = load_settings()
     device_hosts = _settings_device_hosts(settings)
     if device_hosts.get(device_id):
@@ -429,11 +450,39 @@ def active_devices() -> list[dict[str, Any]]:
     return sorted(_active_devices.values(), key=lambda item: item.get('device_id') or '')
 
 
+def recently_seen_devices(max_age_seconds: float) -> list[dict[str, Any]]:
+    """Devuelve solo EcoSensores confirmados recientemente.
+
+    La UI puede conservar dispositivos por TTL para evitar parpadeos por mDNS,
+    pero el ciclo automático de sincronización debe ser más estricto: si el
+    refresco actual no pudo confirmar un sensor, no debe intentar sincronizarlo.
+    """
+    now = datetime.now()
+    fresh: list[dict[str, Any]] = []
+    for item in active_devices():
+        try:
+            last_seen = datetime.fromisoformat(str(item.get('last_seen') or ''))
+        except ValueError:
+            continue
+        if now - last_seen <= timedelta(seconds=max_age_seconds):
+            fresh.append(item)
+    return fresh
+
+
 def active_device_options() -> dict[str, str]:
     return {item['device_id']: device_display_name(str(item['device_id'])) for item in active_devices()}
 
 
 def probe_failures() -> list[dict[str, Any]]:
+    """Errores visibles para la UI.
+
+    El discovery prueba muchos hosts posibles (ecosensor01.local, ecosensor02.local,
+    barrido LAN, etc.). Si esos equipos no están en la red, no debe ensuciar el
+    dashboard. Los fallos quedan guardados internamente y solo se exponen al
+    activar ECOSENSOR_SHOW_PROBE_FAILURES=1.
+    """
+    if not SHOW_PROBE_FAILURES:
+        return []
     return sorted(_probe_failures.values(), key=lambda item: item.get('host') or '')
 
 
@@ -532,7 +581,10 @@ async def ensure_active_devices() -> list[dict[str, Any]]:
 
 
 async def ensure_device_active(device_id: str | None) -> dict[str, Any] | None:
-    target = (device_id or '').strip().lower()
+    raw_target = str(device_id or '').strip()
+    target = normalize_device_id(raw_target)
+    if raw_target and not target:
+        return None
     if target:
         for item in active_devices():
             if item['device_id'] == target:
