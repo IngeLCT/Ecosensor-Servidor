@@ -4,12 +4,13 @@ from fastapi import Request
 from nicegui import Client, app, ui
 
 from services.device_registry import active_device_options, ensure_active_devices, ensure_device_active, forget_device, host_for_device, probe_host, registry_revision, remember_host
-from services.esp_client import build_endpoints, delete_json, sync_time_if_needed
+from services.esp_client import sync_time_if_needed
 from services.main_window import register_main_window
+from services.measurement_sync import coordinated_clear_history
 from services.ota_manager import ota_snapshot, start_device_ota, start_device_web_assets_update
+from services.wifi_manager import clear_device_wifi
 from shared.formatters import device_display_name
 from shared.styles import add_styles
-from storage.measurements_store import clear_measurements
 
 LOCAL_CLIENTS = {'127.0.0.1', '::1', 'localhost'}
 
@@ -149,16 +150,23 @@ async def config_page(request: Request, client: Client) -> None:
 
                 async def confirm() -> None:
                     dialog.close()
-                    result = await delete_json(build_endpoints(host)['wifi_clear'])
+                    result = await clear_device_wifi(device_id, host)
                     if result.get('ok'):
                         forget_device(device_id)
                         if app.storage.user.get('selected_device_id') == device_id:
                             app.storage.user.pop('selected_device_id', None)
-                        ui.notify(f'Credenciales WiFi borradas en {device_display_name(device_id)}. Quitado de las listas activas.', color='positive')
+                        if result.get('confirmed'):
+                            ui.notify(f'Credenciales WiFi borradas en {device_display_name(device_id)}. Quitado de las listas activas.', color='positive')
+                        else:
+                            ui.notify(
+                                f'Orden de borrado enviada a {device_display_name(device_id)}. '
+                                'El equipo cortó la conexión al reiniciarse; verifica que aparezca su red de configuración.',
+                                color='warning',
+                            )
                         await refresh_sensor_options()
                         await refresh_ota_status(rebuild=True)
                     else:
-                        ui.notify(f'No se pudo borrar WiFi: {result.get("data")}', color='negative')
+                        ui.notify(f'No se pudo borrar WiFi: {result.get("message") or result.get("error")}', color='negative')
 
                 ui.button('Borrar WiFi', on_click=confirm).props('unelevated color=negative')
         dialog.open()
@@ -176,13 +184,12 @@ async def config_page(request: Request, client: Client) -> None:
 
                 async def confirm() -> None:
                     dialog.close()
-                    result = await delete_json(build_endpoints(host)['readings_clear'])
+                    result = await coordinated_clear_history(device_id)
                     if not result.get('ok'):
-                        ui.notify(f'No se pudo borrar CSV de {display_name}: {result.get("data")}', color='negative')
+                        ui.notify(f'No se pudo completar el borrado coordinado de {display_name}: {result.get("error")}', color='negative')
                         return
-                    detected = await probe_host(host, timeout=1.5)
-                    target_device_id = str((detected or {}).get('device_id') or device_id)
-                    deleted = clear_measurements(target_device_id)
+                    target_device_id = str(result.get('device_id') or device_id)
+                    deleted = int(result.get('deleted') or 0)
                     ui.notify(f'Historial de {device_display_name(target_device_id)} borrado. Filas locales eliminadas: {deleted}.', color='positive')
                     await refresh_sensor_options()
 

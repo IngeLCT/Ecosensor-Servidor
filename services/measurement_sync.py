@@ -9,14 +9,18 @@ from services.device_registry import (
     ensure_active_devices,
     ensure_device_active,
     host_for_device,
+    invalidate_device_status,
+    mark_device_seen,
     normalize_device_id,
     recently_seen_devices,
     refresh_active_devices,
 )
-from services.esp_client import build_endpoints, configure_push_host, fetch_json, fetch_readings_export, fetch_readings_range, sync_time_if_needed
+from services.esp_client import build_endpoints, configure_push_host, delete_json, fetch_json, fetch_readings_export, fetch_readings_range, sync_time_if_needed
+from services.history_reset_state import begin_history_reset, finish_history_reset, history_reset_in_progress
 from shared.formatters import row_from_payload
-from shared.time_utils import server_local_now, to_server_local_naive
+from shared.time_utils import parse_timestamp, server_local_now
 from storage.measurements_store import (
+    clear_measurements,
     get_latest_measurement,
     latest_source_id,
     missing_source_id_ranges,
@@ -70,15 +74,19 @@ def is_history_syncing(device_id: str | None = None) -> bool:
     return bool(_history_syncing_devices)
 
 
+def cancel_device_sync(device_id: str) -> None:
+    task = _preventive_sync_tasks.pop(device_id, None)
+    if task is not None and not task.done():
+        task.cancel()
+    _history_syncing_devices.discard(device_id)
+    _synced_notice_printed.discard(device_id)
+    _last_preventive_sync_at.pop(device_id, None)
+
+
 def _lock_for(device_id: str) -> asyncio.Lock:
     if device_id not in _sync_locks:
         _sync_locks[device_id] = asyncio.Lock()
     return _sync_locks[device_id]
-
-
-def _iso_local(dt: datetime) -> str:
-    """Devuelve fecha/hora local del servidor, sin marcarla como UTC."""
-    return to_server_local_naive(dt).isoformat(timespec='seconds')
 
 
 def _bool_or_none(value: Any) -> bool | None:
@@ -97,26 +105,10 @@ def _enrich_time_metadata(item: dict[str, Any], current_uptime_s: Any, server_no
     parsed_time_valid = _bool_or_none(item.get('time_valid'))
     time_valid = bool(parsed_time_valid) or (parsed_time_valid is None and bool(item.get('timestamp')))
     item['time_valid'] = time_valid
-    item['time_source'] = 'esp' if time_valid else 'estimated'
-
-    if time_valid and item.get('timestamp'):
-        return
-
-    same_boot = str(item.get('boot_id') or '') == str(current_boot_id or '') if current_boot_id is not None else True
-    if not same_boot:
-        return
-
-    try:
-        current_uptime = float(current_uptime_s)
-        measurement_uptime = float(item.get('uptime_s'))
-    except (TypeError, ValueError):
-        return
-
-    elapsed_since_measurement = max(0.0, current_uptime - measurement_uptime)
-    estimated = server_now - timedelta(seconds=elapsed_since_measurement)
-    if estimated > server_now:
-        estimated = server_now
-    item['timestamp'] = _iso_local(estimated)
+    item['time_source'] = item.get('time_source') or ('esp' if time_valid else 'uptime')
+    if time_valid and parse_timestamp(item.get('timestamp')) is None:
+        item['time_valid'] = False
+        item['time_source'] = 'invalid_timestamp'
 
 
 def _apply_status_latest_timestamp(item: dict[str, Any], status_data: Any) -> bool:
@@ -163,18 +155,7 @@ def _apply_status_latest_timestamp(item: dict[str, Any], status_data: Any) -> bo
 
 
 def _parse_dt(value: Any) -> datetime | None:
-    text = str(value or '').strip()
-    if not text:
-        return None
-    if text.endswith('Z'):
-        text = text[:-1] + '+00:00'
-    try:
-        parsed = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.astimezone()
-    return parsed.astimezone()
+    return parse_timestamp(value)
 
 
 def _push_overdue(row: dict[str, Any] | None) -> tuple[bool, int, int]:
@@ -271,12 +252,12 @@ async def _save_remote_rows(
     current_boot_id: Any,
 ) -> tuple[int, int, int]:
     """Guarda filas remotas y devuelve (insertadas, min_source_id, max_source_id)."""
+    if history_reset_in_progress(device_id):
+        return 0, 0, 0
     inserted_count = 0
     min_seen_source_id = 0
     max_seen_source_id = 0
     server_now = server_local_now()
-    last_estimated: datetime | None = None
-
     prepared_rows: list[dict[str, Any]] = []
 
     for item in rows:
@@ -306,20 +287,9 @@ async def _save_remote_rows(
         else:
             _enrich_time_metadata(item, current_uptime_s, server_now, current_boot_id)
 
-        if not item.get('timestamp') and not historical_row:
-            window_s = item.get('window_s') or 300
-            try:
-                step = max(1, int(window_s))
-            except (TypeError, ValueError):
-                step = 300
-            if last_estimated is None:
-                last_estimated = server_now - timedelta(seconds=step * max(1, len(rows)))
-            else:
-                last_estimated = last_estimated + timedelta(seconds=step)
-            if last_estimated > server_now:
-                last_estimated = server_now
-            item['timestamp'] = _iso_local(last_estimated)
-            item['time_source'] = 'estimated_sequence'
+        if not item.get('timestamp'):
+            item['time_valid'] = False
+            item['time_source'] = item.get('time_source') or 'uptime'
         prepared_rows.append(item)
 
     if prepared_rows:
@@ -345,6 +315,9 @@ async def sync_sensor_measurements(
     esperas largas entre reintentos cuando el usuario pidió la sincronización
     manualmente antes de descargar CSV.
     """
+    target_id = normalize_device_id(device_id, default=DEVICE_ID) or DEVICE_ID
+    if history_reset_in_progress(target_id):
+        return await asyncio.to_thread(get_latest_measurement, target_id)
     active = await ensure_device_active(device_id)
     if not active:
         target_id = (device_id or DEVICE_ID).strip().lower() or DEVICE_ID
@@ -356,6 +329,8 @@ async def sync_sensor_measurements(
     initial_row = await asyncio.to_thread(get_latest_measurement, selected_device_id)
 
     async with _lock_for(selected_device_id):
+        if history_reset_in_progress(selected_device_id):
+            return await asyncio.to_thread(get_latest_measurement, selected_device_id)
         record_sync_event(
             selected_device_id,
             'start',
@@ -436,37 +411,24 @@ async def sync_sensor_measurements(
                         latest_remote_id_known = latest_remote_id > 0
                         latest_inserted = await asyncio.to_thread(save_measurement, host_now, row)
                 latest_valid = bool(isinstance(data, dict) and data.get('valid'))
-                if latest_remote_id <= 0 and isinstance(status_data, dict):
-                    # Si /lecturas aún no tiene promedio válido (por ejemplo al
-                    # arrancar o justo después de borrar SQLite), /status sigue
-                    # reportando el último ID guardado en SD. Usarlo evita
-                    # concluir erróneamente "sin ID remoto pendiente" hasta que
-                    # llegue el siguiente push. Ojo: si el valor es 0 y la base
-                    # local está vacía, NO lo consideramos confirmado.
-                    try:
-                        latest_remote_id = int(status_data.get('last_measurement_id') or 0)
-                    except (TypeError, ValueError):
-                        latest_remote_id = 0
-                    latest_remote_id_known = latest_remote_id > 0
-                if latest_remote_id <= 0 and endpoints_now.get('status'):
+                if endpoints_now.get('status'):
                     fresh_status = await fetch_json(endpoints_now['status'], timeout=4.0)
                     fresh_data = fresh_status.get('data') if fresh_status.get('ok') else None
                     if isinstance(fresh_data, dict):
                         status_data = fresh_data
-                        try:
-                            latest_remote_id = int(status_data.get('last_measurement_id') or 0)
-                        except (TypeError, ValueError):
-                            latest_remote_id = 0
-                        latest_remote_id_known = latest_remote_id > 0
                 response_summary = summarize_response(lecturas)
             else:
                 status_data = active.get('status') if isinstance(active.get('status'), dict) else {}
-                try:
-                    latest_remote_id = int(status_data.get('last_measurement_id') or 0)
-                except (TypeError, ValueError):
-                    latest_remote_id = 0
-                latest_remote_id_known = latest_remote_id > 0
                 response_summary = 'skipped_fetch_latest'
+
+            # El límite histórico real es exclusivamente sd_last_id de un
+            # /status fresco. Un último push puede pertenecer al historial borrado.
+            try:
+                latest_remote_id = max(0, int(status_data.get('sd_last_id') or 0))
+                latest_remote_id_known = True
+            except (TypeError, ValueError, AttributeError):
+                latest_remote_id = 0
+                latest_remote_id_known = False
 
             record_sync_event(
                 selected_device_id,
@@ -497,9 +459,6 @@ async def sync_sensor_measurements(
             else:
                 missing_ranges = await asyncio.to_thread(missing_source_id_ranges, selected_device_id, latest_remote_id)
                 pending_count = sum((end_id - start_id + 1) for start_id, end_id in missing_ranges)
-
-            if latest_remote_id <= 0 and local_floor_id <= 0:
-                latest_remote_id_known = False
 
             if latest_remote_id > 0:
                 if missing_ranges:
@@ -839,6 +798,48 @@ async def sync_sensor_measurements(
         return row
 
 
+async def coordinated_clear_history(device_id: str) -> dict[str, Any]:
+    target_id = normalize_device_id(device_id)
+    if not target_id:
+        return {'ok': False, 'error': 'invalid_device_id'}
+    active = await ensure_device_active(target_id)
+    if not active:
+        return {'ok': False, 'error': 'sensor_not_active'}
+    host = str(active.get('host') or host_for_device(target_id))
+    begin_history_reset(target_id)
+    cancel_device_sync(target_id)
+    confirmed = False
+    try:
+        async with _lock_for(target_id):
+            invalidate_device_status(target_id)
+            remote = await delete_json(build_endpoints(host)['readings_clear'], timeout=15.0)
+            if not remote.get('ok'):
+                return {'ok': False, 'error': 'remote_clear_failed', 'remote': summarize_response(remote)}
+            fresh = await fetch_json(build_endpoints(host)['status'], timeout=8.0)
+            status = fresh.get('data') if fresh.get('ok') and isinstance(fresh.get('data'), dict) else None
+            if not isinstance(status, dict):
+                return {'ok': False, 'error': 'fresh_status_failed', 'status': summarize_response(fresh)}
+            expected = {
+                'sd_ready': status.get('sd_ready') is True,
+                'sd_last_id': int(status.get('sd_last_id') or 0) == 0,
+                'last_measurement_id': int(status.get('last_measurement_id') or 0) == 0,
+                'checkpoint_valid': status.get('checkpoint_valid') is True,
+                'checkpoint_current': status.get('checkpoint_current') is True,
+                'history_index_ready': status.get('history_index_ready') is True,
+                'history_index_points': int(status.get('history_index_points') or 0) == 0,
+            }
+            if not all(expected.values()):
+                return {'ok': False, 'error': 'remote_clear_not_confirmed', 'checks': expected, 'status': status}
+            deleted = await asyncio.to_thread(clear_measurements, target_id)
+            cancel_device_sync(target_id)
+            invalidate_device_status(target_id)
+            mark_device_seen(target_id, host, status)
+            confirmed = True
+            return {'ok': True, 'device_id': target_id, 'deleted': deleted, 'status': status}
+    finally:
+        finish_history_reset(target_id, confirmed=confirmed)
+
+
 async def sync_before_csv_download(device_id: str | None = None) -> dict[str, Any]:
     """Sincroniza histórico bajo demanda antes de permitir descargar CSV."""
     target_id = normalize_device_id(device_id, default=DEVICE_ID)
@@ -876,10 +877,18 @@ async def sync_before_csv_download(device_id: str | None = None) -> dict[str, An
             'message': 'No se pudo sincronizar el historial antes de descargar el CSV.',
         }
 
-    await asyncio.to_thread(repair_historical_invalid_timestamps, target_id)
-
+    host = str(active.get('host') or host_for_device(target_id))
+    fresh_status = await fetch_json(build_endpoints(host)['status'], timeout=5.0)
+    fresh_data = fresh_status.get('data') if fresh_status.get('ok') and isinstance(fresh_status.get('data'), dict) else None
+    if not isinstance(fresh_data, dict):
+        return {
+            'ok': False,
+            'device_id': target_id,
+            'error': 'fresh_status_failed',
+            'message': 'No se pudo confirmar sd_last_id con un /status fresco.',
+        }
     try:
-        latest_remote_id = int((row or {}).get('measurement_id') or 0)
+        latest_remote_id = max(0, int(fresh_data.get('sd_last_id') or 0))
     except (TypeError, ValueError):
         latest_remote_id = 0
 
@@ -922,6 +931,8 @@ def schedule_preventive_history_sync(device_id: str | None, *, delay_seconds: fl
     repetidos para el mismo EcoSensor y deja que el lock existente serialize
     contra descargas CSV o ciclos automáticos.
     """
+    if device_id and history_reset_in_progress(device_id):
+        return
     target_id = (device_id or DEVICE_ID).strip().lower() or DEVICE_ID
     if target_id in _history_syncing_devices:
         return

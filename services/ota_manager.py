@@ -156,12 +156,24 @@ def load_manifest(device_id: str) -> dict[str, Any]:
     bin_path = _device_dir(device_id) / filename
     if not bin_path.exists() or not bin_path.is_file():
         raise OtaError('archivo .bin no encontrado')
+    actual_size = bin_path.stat().st_size
+    actual_sha256 = _sha256_file(bin_path).upper()
+    declared_size = data.get('size_bytes')
+    declared_sha256 = str(data.get('sha256') or '').strip().upper()
+    if declared_size is not None:
+        try:
+            if int(declared_size) != actual_size:
+                raise OtaError('size_bytes del manifest no coincide con el binario')
+        except (TypeError, ValueError) as exc:
+            raise OtaError('size_bytes inválido en manifest') from exc
+    if declared_sha256 and declared_sha256 != actual_sha256:
+        raise OtaError('SHA-256 del manifest no coincide con el binario')
     out = dict(data)
     out['device_id'] = device_id
     out['version'] = version
     out['filename'] = filename
-    out['size_bytes'] = bin_path.stat().st_size
-    out['sha256'] = str(out.get('sha256') or '').strip() or _sha256_file(bin_path)
+    out['size_bytes'] = actual_size
+    out['sha256'] = actual_sha256
     return out
 
 

@@ -37,7 +37,8 @@ from fastapi import Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from nicegui import app, ui
 from services.device_registry import ensure_active_devices, mark_device_seen, normalize_device_id, probe_failures, remember_host
-from services.measurement_sync import background_sync_loop, is_history_syncing, schedule_preventive_history_sync, sync_before_csv_download
+from services.measurement_sync import background_sync_loop, coordinated_clear_history, is_history_syncing, schedule_preventive_history_sync, sync_before_csv_download
+from services.history_reset_state import accept_push_id, quarantine_push
 from services.main_window import open_main_browser
 from services.mdns_service import start_mdns_service
 from services.ota_manager import (
@@ -260,6 +261,13 @@ async def devices_status() -> JSONResponse:
     return JSONResponse({'ok': True, 'active': active, 'failures': probe_failures()})
 
 
+@app.post('/api/history/reset')
+async def api_history_reset(device_id: str = Query(...)) -> JSONResponse:
+    """Ejecuta el mismo borrado coordinado y confirmado que la interfaz local."""
+    result = await coordinated_clear_history(device_id)
+    return JSONResponse(result, status_code=200 if result.get('ok') else 409)
+
+
 @app.post('/api/measurements/push')
 async def api_measurements_push(request: Request) -> JSONResponse:
     """Recibe una medición promedio enviada directamente por un EcoSensor."""
@@ -278,6 +286,11 @@ async def api_measurements_push(request: Request) -> JSONResponse:
     device_id = normalize_device_id(row.get('id') or row.get('device_id'))
     if not device_id:
         return JSONResponse({'ok': False, 'error': 'invalid_device_id'}, status_code=400)
+
+    accepted, reject_reason = accept_push_id(device_id, row.get('measurement_id'))
+    if not accepted:
+        quarantine_push(device_id, payload)
+        return JSONResponse({'ok': False, 'error': reject_reason, 'device_id': device_id}, status_code=409)
 
     row['id'] = device_id
     row['device_id'] = device_id
